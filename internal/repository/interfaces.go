@@ -8,10 +8,10 @@ import (
 // Repository 主Repository接口，聚合所有子Repository
 // 提供统一的数据访问接口，支持事务管理和批量操作
 type Repository interface {
-	UserRepo         UserRepository
-	QueryHistoryRepo QueryHistoryRepository
-	ConnectionRepo   ConnectionRepository
-	SchemaRepo       SchemaRepository
+	UserRepo() UserRepository
+	QueryHistoryRepo() QueryHistoryRepository
+	ConnectionRepo() ConnectionRepository
+	SchemaRepo() SchemaRepository
 	
 	// 事务管理
 	BeginTx(ctx context.Context) (TxRepository, error)
@@ -22,10 +22,10 @@ type Repository interface {
 // TxRepository 事务Repository接口
 // 在事务上下文中执行所有Repository操作
 type TxRepository interface {
-	UserRepo         UserRepository
-	QueryHistoryRepo QueryHistoryRepository
-	ConnectionRepo   ConnectionRepository
-	SchemaRepo       SchemaRepository
+	UserRepo() UserRepository
+	QueryHistoryRepo() QueryHistoryRepository
+	ConnectionRepo() ConnectionRepository
+	SchemaRepo() SchemaRepository
 	
 	Commit() error
 	Rollback() error

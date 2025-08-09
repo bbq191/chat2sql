@@ -1,29 +1,31 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	
+	"chat2sql-go/internal/auth"
 	"chat2sql-go/internal/repository"
 )
 
 // AuthHandler 认证处理器
 // 处理用户注册、登录、Token刷新等认证相关操作
 type AuthHandler struct {
-	userRepo repository.UserRepository
-	// jwtService JWT服务，后续实现
-	logger   *zap.Logger
+	userRepo   repository.UserRepository
+	jwtService *auth.JWTService
+	logger     *zap.Logger
 }
 
 // NewAuthHandler 创建认证处理器实例
-func NewAuthHandler(userRepo repository.UserRepository, logger *zap.Logger) *AuthHandler {
+func NewAuthHandler(userRepo repository.UserRepository, jwtService *auth.JWTService, logger *zap.Logger) *AuthHandler {
 	return &AuthHandler{
-		userRepo: userRepo,
-		logger:   logger,
+		userRepo:   userRepo,
+		jwtService: jwtService,
+		logger:     logger,
 	}
 }
 
@@ -137,8 +139,18 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 	
-	// TODO: 密码哈希加密（后续集成bcrypt）
-	passwordHash := hashPassword(req.Password)
+	// 密码哈希加密
+	passwordHash, err := hashPassword(req.Password)
+	if err != nil {
+		h.logger.Error("Failed to hash password",
+			zap.Error(err))
+		
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Code:    "PASSWORD_HASH_FAILED",
+			Message: "密码加密失败",
+		})
+		return
+	}
 	
 	// 创建新用户
 	user := &repository.User{
@@ -161,8 +173,19 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 	
-	// TODO: 生成JWT Token（后续实现）
-	response := h.generateAuthResponse(user)
+	// 生成JWT Token
+	response, err := h.generateAuthResponse(user)
+	if err != nil {
+		h.logger.Error("Failed to generate JWT tokens",
+			zap.Error(err),
+			zap.Int64("user_id", user.ID))
+		
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Code:    "TOKEN_GENERATION_FAILED",
+			Message: "Token生成失败",
+		})
+		return
+	}
 	
 	h.logger.Info("User registered successfully",
 		zap.Int64("user_id", user.ID),
@@ -202,13 +225,25 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 	
-	// 密码哈希验证
-	passwordHash := hashPassword(req.Password)
-	
-	// 验证用户凭据
-	user, err := h.userRepo.ValidateCredentials(c.Request.Context(), req.Username, passwordHash)
+	// 获取用户信息用于密码验证
+	user, err := h.userRepo.GetByUsername(c.Request.Context(), req.Username)
 	if err != nil {
-		h.logger.Warn("Invalid login credentials",
+		h.logger.Warn("User not found during login",
+			zap.Error(err),
+			zap.String("username", req.Username),
+			zap.String("remote_addr", c.ClientIP()))
+		
+		c.JSON(http.StatusUnauthorized, ErrorResponse{
+			Code:    "INVALID_CREDENTIALS",
+			Message: "用户名或密码错误",
+		})
+		return
+	}
+	
+	// 验证密码
+	passwordValid, err := verifyPassword(req.Password, user.PasswordHash)
+	if err != nil || !passwordValid {
+		h.logger.Warn("Invalid password during login",
 			zap.Error(err),
 			zap.String("username", req.Username),
 			zap.String("remote_addr", c.ClientIP()))
@@ -246,8 +281,19 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			zap.Int64("user_id", user.ID))
 	}
 	
-	// TODO: 生成JWT Token（后续实现）
-	response := h.generateAuthResponse(user)
+	// 生成JWT Token
+	response, err := h.generateAuthResponse(user)
+	if err != nil {
+		h.logger.Error("Failed to generate JWT tokens",
+			zap.Error(err),
+			zap.Int64("user_id", user.ID))
+		
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Code:    "TOKEN_GENERATION_FAILED",
+			Message: "Token生成失败",
+		})
+		return
+	}
 	
 	h.logger.Info("User logged in successfully",
 		zap.Int64("user_id", user.ID),
@@ -282,11 +328,22 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 	
-	// TODO: 验证刷新Token（后续实现JWT验证）
-	// claims, err := h.jwtService.ValidateRefreshToken(req.RefreshToken)
+	// 验证刷新Token
+	claims, err := h.jwtService.ValidateRefreshToken(req.RefreshToken)
+	if err != nil {
+		h.logger.Warn("Invalid refresh token",
+			zap.Error(err),
+			zap.String("remote_addr", c.ClientIP()))
+		
+		c.JSON(http.StatusUnauthorized, ErrorResponse{
+			Code:    "INVALID_REFRESH_TOKEN",
+			Message: "刷新Token无效或已过期",
+		})
+		return
+	}
 	
-	// 临时实现 - 模拟Token验证成功
-	userID := int64(1) // TODO: 从Token解析用户ID
+	// 从Token获取用户ID
+	userID := claims.UserID
 	
 	// 获取用户信息
 	user, err := h.userRepo.GetByID(c.Request.Context(), userID)
@@ -311,8 +368,19 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 	
-	// TODO: 生成新的JWT Token对（后续实现）
-	response := h.generateAuthResponse(user)
+	// 生成新的JWT Token对
+	response, err := h.generateAuthResponse(user)
+	if err != nil {
+		h.logger.Error("Failed to generate JWT tokens during refresh",
+			zap.Error(err),
+			zap.Int64("user_id", user.ID))
+		
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Code:    "TOKEN_GENERATION_FAILED",
+			Message: "Token生成失败",
+		})
+		return
+	}
 	
 	h.logger.Info("Token refreshed successfully",
 		zap.Int64("user_id", user.ID),
@@ -322,21 +390,20 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 }
 
 // generateAuthResponse 生成认证响应
-// TODO: 集成JWT服务后完善Token生成逻辑
-func (h *AuthHandler) generateAuthResponse(user *repository.User) *AuthResponse {
-	// 临时实现 - 模拟Token生成
-	accessToken := "mock_access_token_" + strings.ReplaceAll(time.Now().Format(time.RFC3339Nano), ":", "_")
-	refreshToken := "mock_refresh_token_" + strings.ReplaceAll(time.Now().Format(time.RFC3339Nano), ":", "_")
-	
-	expiresIn := int64(3600) // 1小时
-	expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
+// 使用JWT服务生成真正的Token对
+func (h *AuthHandler) generateAuthResponse(user *repository.User) (*AuthResponse, error) {
+	// 使用JWT服务生成Token对
+	tokenPair, err := h.jwtService.GenerateTokenPair(user.ID, user.Username, user.Role)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate token pair: %w", err)
+	}
 	
 	return &AuthResponse{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		TokenType:    "Bearer",
-		ExpiresIn:    expiresIn,
-		ExpiresAt:    expiresAt,
+		AccessToken:  tokenPair.AccessToken,
+		RefreshToken: tokenPair.RefreshToken,
+		TokenType:    tokenPair.TokenType,
+		ExpiresIn:    tokenPair.ExpiresIn,
+		ExpiresAt:    tokenPair.ExpiresAt,
 		User: &UserInfo{
 			ID:       user.ID,
 			Username: user.Username,
@@ -344,15 +411,9 @@ func (h *AuthHandler) generateAuthResponse(user *repository.User) *AuthResponse 
 			Role:     user.Role,
 			Status:   user.Status,
 		},
-	}
+	}, nil
 }
 
-// hashPassword 密码哈希加密
-// TODO: 集成bcrypt库进行密码加密
-func hashPassword(password string) string {
-	// 临时实现 - 后续集成bcrypt
-	return "hashed_" + password
-}
 
 // ErrorResponse 统一错误响应结构
 type ErrorResponse struct {

@@ -260,8 +260,20 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	}
 	
 	// 验证当前密码
-	currentPasswordHash := hashPassword(req.CurrentPassword)
-	if user.PasswordHash != currentPasswordHash {
+	passwordValid, err := verifyPassword(req.CurrentPassword, user.PasswordHash)
+	if err != nil {
+		h.logger.Error("Failed to verify current password",
+			zap.Error(err),
+			zap.Int64("user_id", userID))
+		
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Code:    "PASSWORD_VERIFICATION_FAILED",
+			Message: "密码验证失败",
+		})
+		return
+	}
+	
+	if !passwordValid {
 		h.logger.Warn("Invalid current password for password change",
 			zap.Int64("user_id", userID),
 			zap.String("remote_addr", c.ClientIP()))
@@ -274,7 +286,18 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	}
 	
 	// 加密新密码
-	newPasswordHash := hashPassword(req.NewPassword)
+	newPasswordHash, err := hashPassword(req.NewPassword)
+	if err != nil {
+		h.logger.Error("Failed to hash new password",
+			zap.Error(err),
+			zap.Int64("user_id", userID))
+		
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Code:    "PASSWORD_HASH_FAILED",
+			Message: "新密码加密失败",
+		})
+		return
+	}
 	
 	// 更新密码
 	if err := h.userRepo.UpdatePassword(c.Request.Context(), userID, newPasswordHash); err != nil {
@@ -331,3 +354,4 @@ func NewSuccessResponse(code, message string) *SuccessResponse {
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
 }
+

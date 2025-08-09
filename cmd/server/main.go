@@ -70,7 +70,7 @@ func main() {
 	prometheusMetrics := metrics.NewPrometheusMetrics(metricsConfig, logger)
 
 	// 初始化处理器
-	authHandler := handler.NewAuthHandler(repo.UserRepo(), logger)
+	authHandler := handler.NewAuthHandler(repo.UserRepo(), jwtService, logger)
 	userHandler := handler.NewUserHandler(repo.UserRepo(), logger)
 	sqlHandler := handler.NewSQLHandler(repo.QueryHistoryRepo(), repo.ConnectionRepo(), logger)
 	connectionHandler := handler.NewConnectionHandler(repo.ConnectionRepo(), repo.SchemaRepo(), logger)

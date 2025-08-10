@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -118,13 +119,19 @@ func (v *SQLSecurityValidator) initializePatterns() {
 		`/\*.*?\*/`,
 		`#[^\r\n]*`,
 		
-		// 字符串逃逸
-		`'[^']*'[^']*'`,
-		`"[^"]*"[^"]*"`,
+		// 字符串逃逸攻击 (但排除合法的双引号转义)
+		`'[^']*'\s*[=<>!]+\s*'[^']*'`,    // 'admin'='password' 模式
+		`"[^"]*"\s*[=<>!]+\s*"[^"]*"`,    // "admin"="password" 模式
+		`'[^']*'\s*and\s*'[^']*'`,        // 'admin' and 'password' 模式
+		`'[^']*'\s*or\s*'[^']*'`,         // 'admin' or 'password' 模式
+		
+		// 编码绕过攻击
+		`0x[0-9a-fA-F]+`, // 十六进制编码
 		
 		// 时间延迟注入
 		`(?i)\bwaitfor\s+delay\b`,
 		`(?i)\bsleep\s*\(`,
+		`(?i)\bpg_sleep\s*\(`, // PostgreSQL sleep函数
 		`(?i)\bbenchmark\s*\(`,
 		
 		// 布尔盲注
@@ -139,6 +146,8 @@ func (v *SQLSecurityValidator) initializePatterns() {
 		`(?i)\bchar\s*\(`,
 		`(?i)\bord\s*\(`,
 		`(?i)\bhex\s*\(`,
+		`(?i)\bsubstring\s*\(.*version\s*\(\)`, // 版本信息提取（盲注常用）
+		`(?i)\bversion\s*\(\)`,                   // 版本函数调用
 		
 		// 系统函数
 		`(?i)\bload_file\s*\(`,
@@ -277,10 +286,8 @@ func (v *SQLSecurityValidator) ValidateSQL(sql string) *ValidationResult {
 	// 8. 提取表名
 	result.TablesUsed = v.extractTables(cleanedSQL)
 	
-	// 9. 风险评估
-	if result.IsValid && len(result.Warnings) > 0 {
-		result.Risk = "MEDIUM"
-	}
+	// 9. 高级风险评估
+	result.Risk = v.assessAdvancedRisk(result, cleanedSQL)
 	
 	return result
 }
@@ -356,24 +363,15 @@ func (v *SQLSecurityValidator) detectQueryType(sql string) string {
 // isReadOnlyQuery 判断是否为只读查询
 func (v *SQLSecurityValidator) isReadOnlyQuery(queryType string) bool {
 	readOnlyTypes := []string{"SELECT", "WITH", "EXPLAIN", "DESCRIBE", "SHOW"}
-	
-	for _, readOnlyType := range readOnlyTypes {
-		if queryType == readOnlyType {
-			return true
-		}
-	}
-	
-	return false
+	return slices.Contains(readOnlyTypes, queryType)
 }
 
 // isAllowedStatement 检查是否为允许的语句类型
 func (v *SQLSecurityValidator) isAllowedStatement(queryType string) bool {
-	for _, allowed := range v.allowedStatements {
-		if strings.ToUpper(allowed) == queryType {
-			return true
-		}
-	}
-	return false
+	// 使用slices.ContainsFunc进行大小写不敏感的比较
+	return slices.ContainsFunc(v.allowedStatements, func(allowed string) bool {
+		return strings.EqualFold(allowed, queryType)
+	})
 }
 
 // checkForbiddenKeywords 检查禁止关键词
@@ -382,7 +380,9 @@ func (v *SQLSecurityValidator) checkForbiddenKeywords(sql string) []SecurityViol
 	upperSQL := strings.ToUpper(sql)
 	
 	for _, keyword := range v.forbiddenKeywords {
-		if strings.Contains(upperSQL, keyword) {
+		// 使用正则表达式检测完整单词，避免误判（如EXPLAIN中的XA）
+		pattern := fmt.Sprintf(`\b%s\b`, regexp.QuoteMeta(keyword))
+		if matched, _ := regexp.MatchString(pattern, upperSQL); matched {
 			violations = append(violations, SecurityViolation{
 				Type:    "FORBIDDEN_KEYWORD",
 				Message: fmt.Sprintf("检测到禁止使用的关键词: %s", keyword),
@@ -463,15 +463,10 @@ func (v *SQLSecurityValidator) extractTables(sql string) []string {
 					tableName = tableName[dotIndex+1:]
 				}
 				
-				// 去重添加
-				found := false
-				for _, existing := range tables {
-					if strings.EqualFold(existing, tableName) {
-						found = true
-						break
-					}
-				}
-				if !found && tableName != "" {
+				// 去重添加（使用大小写不敏感的比较）
+				if tableName != "" && !slices.ContainsFunc(tables, func(existing string) bool {
+					return strings.EqualFold(existing, tableName)
+				}) {
 					tables = append(tables, tableName)
 				}
 			}
@@ -498,10 +493,10 @@ func (v *SQLSecurityValidator) ValidateSQLStrict(sql string) error {
 }
 
 // GetSecurityReport 获取安全报告
-func (v *SQLSecurityValidator) GetSecurityReport(sql string) map[string]interface{} {
+func (v *SQLSecurityValidator) GetSecurityReport(sql string) map[string]any {
 	result := v.ValidateSQL(sql)
 	
-	report := map[string]interface{}{
+	report := map[string]any{
 		"query_length":     len(sql),
 		"query_type":       result.QueryType,
 		"is_read_only":     result.IsReadOnly,
@@ -514,27 +509,151 @@ func (v *SQLSecurityValidator) GetSecurityReport(sql string) map[string]interfac
 	return report
 }
 
+// assessAdvancedRisk 高级风险评估算法
+// 基于sqlmap风险评估最佳实践，提供更精确的风险等级判定
+func (v *SQLSecurityValidator) assessAdvancedRisk(result *ValidationResult, sql string) string {
+	// 如果已经有严重错误，直接返回高风险
+	if len(result.Errors) > 0 {
+		return "HIGH"
+	}
+	
+	riskScore := 0
+	upperSQL := strings.ToUpper(sql)
+	
+	// 1. 查询复杂度评估
+	if strings.Contains(upperSQL, "UNION") {
+		riskScore += 30 // UNION查询增加注入风险
+	}
+	if strings.Contains(upperSQL, "SUBQUERY") || strings.Count(upperSQL, "(") > 2 {
+		riskScore += 15 // 子查询增加复杂度
+	}
+	if strings.Contains(upperSQL, "CASE") || strings.Contains(upperSQL, "WHEN") {
+		riskScore += 10 // 条件语句增加风险
+	}
+	
+	// 2. 函数调用风险评估
+	suspiciousFunctions := []string{"CONCAT", "CHAR", "ASCII", "SUBSTRING", "LENGTH", "VERSION"}
+	for _, fn := range suspiciousFunctions {
+		if strings.Contains(upperSQL, fn+"(") {
+			riskScore += 8 // 每个可疑函数增加8分
+		}
+	}
+	
+	// 聚合函数复杂性评估
+	aggregateFunctions := []string{"COUNT", "SUM", "AVG", "MAX", "MIN", "GROUP_CONCAT"}
+	for _, fn := range aggregateFunctions {
+		if strings.Contains(upperSQL, fn+"(") {
+			riskScore += 5 // 聚合函数增加复杂性
+		}
+	}
+	
+	// 3. 操作符和语法模式风险
+	if strings.Contains(upperSQL, "LIKE") && strings.Contains(upperSQL, "%") {
+		riskScore += 5 // 模糊匹配可能被滥用
+	}
+	if strings.Contains(upperSQL, "ORDER BY") && 
+	   (strings.Contains(upperSQL, "RAND()") || strings.Contains(upperSQL, "RANDOM()")) {
+		riskScore += 15 // 随机排序可能用于绕过
+	}
+	
+	// JOIN操作复杂性评估
+	joinTypes := []string{"JOIN", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN", "OUTER JOIN", "FULL JOIN"}
+	for _, joinType := range joinTypes {
+		if strings.Contains(upperSQL, joinType) {
+			riskScore += 8 // 每个JOIN增加复杂性
+		}
+	}
+	
+	// GROUP BY/HAVING复杂性评估
+	if strings.Contains(upperSQL, "GROUP BY") {
+		riskScore += 6 // GROUP BY增加复杂性
+	}
+	if strings.Contains(upperSQL, "HAVING") {
+		riskScore += 8 // HAVING子句增加复杂性
+	}
+	
+	// 4. 数据访问模式风险
+	if len(result.TablesUsed) > 3 {
+		riskScore += 10 // 访问多个表增加风险
+	}
+	if result.QueryType == "EXPLAIN" {
+		riskScore += 5 // EXPLAIN可能被用于信息收集
+	}
+	
+	// 5. 警告信息权重
+	riskScore += len(result.Warnings) * 12
+	
+	// 6. 查询长度风险评估
+	sqlLength := len(sql)
+	if sqlLength > 1000 {
+		riskScore += 20 // 过长查询增加风险
+	} else if sqlLength > 500 {
+		riskScore += 10
+	}
+	
+	// 7. 特殊字符密度评估
+	specialChars := strings.Count(sql, "'") + strings.Count(sql, "\"") + 
+	                strings.Count(sql, ";") + strings.Count(sql, "--")
+	if specialChars > 5 {
+		riskScore += specialChars * 2 // 特殊字符过多可能是注入尝试
+	}
+	
+	// 根据风险分数确定风险等级（基于sqlmap风险评估标准）
+	switch {
+	case riskScore >= 60:
+		return "HIGH"    // 高风险：可能影响数据库完整性
+	case riskScore >= 25:
+		return "MEDIUM"  // 中等风险：需要额外审查
+	default:
+		return "LOW"     // 低风险：对大多数注入点是无害的
+	}
+}
+
 // calculateSecurityScore 计算安全评分 (0-100)
+// 基于高级风险评估提供更精确的安全评分
 func (v *SQLSecurityValidator) calculateSecurityScore(result *ValidationResult) int {
 	score := 100
 	
-	// 错误扣分
-	score -= len(result.Errors) * 30
+	// 基于错误数量的动态扣分
+	errorPenalty := len(result.Errors) * 35
+	if len(result.Errors) > 2 {
+		errorPenalty += (len(result.Errors) - 2) * 10 // 错误过多额外惩罚
+	}
+	score -= errorPenalty
 	
-	// 警告扣分
-	score -= len(result.Warnings) * 10
+	// 基于警告严重性的动态扣分
+	warningPenalty := len(result.Warnings) * 8
+	if len(result.Warnings) > 3 {
+		warningPenalty += (len(result.Warnings) - 3) * 5 // 警告过多额外惩罚
+	}
+	score -= warningPenalty
 	
-	// 风险等级扣分
+	// 基于风险等级的精确扣分（对应sqlmap风险等级）
 	switch result.Risk {
 	case "HIGH":
-		score -= 50
+		score -= 60 // 高风险大幅扣分
 	case "MEDIUM":
-		score -= 20
+		score -= 25 // 中等风险适度扣分
+	case "LOW":
+		score -= 5  // 低风险轻微扣分
+	}
+	
+	// 基于查询类型的微调
+	if !result.IsReadOnly {
+		score -= 15 // 非只读查询额外风险
+	}
+	
+	// 基于表使用数量的风险评估
+	if len(result.TablesUsed) > 2 {
+		score -= (len(result.TablesUsed) - 2) * 3 // 多表访问风险
 	}
 	
 	// 确保分数在合理范围内
 	if score < 0 {
 		score = 0
+	}
+	if score > 100 {
+		score = 100
 	}
 	
 	return score

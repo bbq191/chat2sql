@@ -62,7 +62,7 @@ type SQLExecutionResult struct {
 	ExecutionTime int32                    `json:"execution_time" example:"150"`
 	RowCount      int32                    `json:"row_count" example:"10"`
 	Status        string                   `json:"status" example:"success"`
-	Data          []map[string]interface{} `json:"data,omitempty"`
+	Data          []map[string]any `json:"data,omitempty"`
 	Error         string                   `json:"error,omitempty"`
 }
 
@@ -496,7 +496,7 @@ func (h *SQLHandler) executeSQL(ctx context.Context, sql string, connection *rep
 		ExecutionTime: executionTime,
 		RowCount:      10, // 模拟结果行数
 		Status:        string(repository.QuerySuccess),
-		Data: []map[string]interface{}{
+		Data: []map[string]any{
 			{"id": 1, "name": "用户1", "email": "user1@example.com"},
 			{"id": 2, "name": "用户2", "email": "user2@example.com"},
 		},

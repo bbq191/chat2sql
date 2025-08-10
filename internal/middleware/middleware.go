@@ -360,19 +360,19 @@ func generateRequestID() string {
 }
 
 // GetMetrics 获取指标数据（用于/metrics端点）
-func GetMetrics() map[string]interface{} {
-	result := make(map[string]interface{})
+func GetMetrics() map[string]any {
+	result := make(map[string]any)
 	
 	// 请求总数指标
 	totalRequests := make(map[string]int64)
-	globalMetrics.requestTotal.Range(func(key, value interface{}) bool {
+	globalMetrics.requestTotal.Range(func(key, value any) bool {
 		totalRequests[key.(string)] = value.(int64)
 		return true
 	})
 	
 	// 响应时间指标
 	avgDurations := make(map[string]float64)
-	globalMetrics.requestDuration.Range(func(key, value interface{}) bool {
+	globalMetrics.requestDuration.Range(func(key, value any) bool {
 		durations := value.([]time.Duration)
 		if len(durations) > 0 {
 			var total time.Duration

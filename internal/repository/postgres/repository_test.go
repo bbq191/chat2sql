@@ -66,18 +66,24 @@ func TestPostgreSQLRepository(t *testing.T) {
 
 // setupTestDatabase 设置测试数据库
 func setupTestDatabase(t *testing.T) (*pgxpool.Pool, func()) {
-	// 这里应该连接到测试数据库
-	// 由于没有实际的测试数据库配置，我们创建一个模拟的配置
+	// 连接到本地测试数据库
 	dbConfig := &config.DatabaseConfig{
 		Host:            "localhost", 
 		Port:            5432,
 		User:            "postgres",
-		Password:        "password",
+		Password:        "",  // 本地环境通常无密码或使用默认配置
 		Database:        "chat2sql_test",
+		SSLMode:         "disable",  // 本地环境禁用SSL
 		MaxConns:        100,
 		MinConns:        10,
 		MaxConnLifetime: time.Hour,
 		MaxConnIdleTime: 30 * time.Minute,
+		HealthCheckPeriod: 5 * time.Minute,  // 健康检查周期
+		ConnectTimeout:  30 * time.Second,   // 连接超时
+		QueryTimeout:    30 * time.Second,   // 查询超时
+		PreparedStatementCacheSize: 100,     // 预处理语句缓存
+		ApplicationName: "chat2sql-test",    // 应用名称
+		SearchPath:      "public",           // 搜索路径
 	}
 	
 	logger := zap.NewNop()

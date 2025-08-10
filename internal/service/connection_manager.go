@@ -181,7 +181,7 @@ func (cm *ConnectionManager) Stop() error {
 	}
 	
 	// 关闭所有连接池
-	cm.connectionPools.Range(func(key, value interface{}) bool {
+	cm.connectionPools.Range(func(key, value any) bool {
 		if pool, ok := value.(*ManagedPool); ok {
 			pool.Pool.Close()
 		}
@@ -305,7 +305,7 @@ func (cm *ConnectionManager) configurePoolSettings(config *pgxpool.Config) {
 // checkUserPoolLimit 检查用户连接池数量限制
 func (cm *ConnectionManager) checkUserPoolLimit(userID int64) error {
 	count := 0
-	cm.connectionPools.Range(func(key, value interface{}) bool {
+	cm.connectionPools.Range(func(key, value any) bool {
 		if managedPool, ok := value.(*ManagedPool); ok {
 			if managedPool.Connection.UserID == userID {
 				count++
@@ -449,7 +449,7 @@ func (cm *ConnectionManager) healthCheckRoutine() {
 
 // performHealthCheck 执行健康检查
 func (cm *ConnectionManager) performHealthCheck() {
-	cm.connectionPools.Range(func(key, value interface{}) bool {
+	cm.connectionPools.Range(func(key, value any) bool {
 		if managedPool, ok := value.(*ManagedPool); ok {
 			connectionID := key.(int64)
 			cm.checkPoolHealth(connectionID, managedPool)
@@ -512,7 +512,7 @@ func (cm *ConnectionManager) cleanupRoutine() {
 func (cm *ConnectionManager) cleanupIdlePools() {
 	now := time.Now()
 	
-	cm.connectionPools.Range(func(key, value interface{}) bool {
+	cm.connectionPools.Range(func(key, value any) bool {
 		if managedPool, ok := value.(*ManagedPool); ok {
 			managedPool.mutex.RLock()
 			isIdle := now.Sub(managedPool.LastUsed) > cm.poolIdleTimeout
@@ -546,19 +546,19 @@ func (cm *ConnectionManager) updateConnectionStatus(connectionID int64, status r
 }
 
 // GetPoolStats 获取连接池统计信息
-func (cm *ConnectionManager) GetPoolStats() map[string]interface{} {
-	stats := map[string]interface{}{
+func (cm *ConnectionManager) GetPoolStats() map[string]any {
+	stats := map[string]any{
 		"total_pools": 0,
 		"healthy_pools": 0,
 		"unhealthy_pools": 0,
-		"pools": []map[string]interface{}{},
+		"pools": []map[string]any{},
 	}
 	
 	totalPools := 0
 	healthyPools := 0
-	pools := []map[string]interface{}{}
+	pools := []map[string]any{}
 	
-	cm.connectionPools.Range(func(key, value interface{}) bool {
+	cm.connectionPools.Range(func(key, value any) bool {
 		if managedPool, ok := value.(*ManagedPool); ok {
 			totalPools++
 			
@@ -571,7 +571,7 @@ func (cm *ConnectionManager) GetPoolStats() map[string]interface{} {
 				healthyPools++
 			}
 			
-			poolInfo := map[string]interface{}{
+			poolInfo := map[string]any{
 				"connection_id":     key,
 				"total_conns":       poolStat.TotalConns(),
 				"idle_conns":        poolStat.IdleConns(),
@@ -596,6 +596,19 @@ func (cm *ConnectionManager) GetPoolStats() map[string]interface{} {
 
 // NewAESEncryption 创建AES加密服务
 func NewAESEncryption(key []byte) (*AESEncryption, error) {
+	// 验证密钥是否为空或nil
+	if key == nil || len(key) == 0 {
+		return nil, errors.New("加密密钥不能为nil或空")
+	}
+	
+	// 只接受合理长度的密钥(16-48字节)，其他情况返回错误  
+	if len(key) < 16 {
+		return nil, errors.New("加密密钥长度不能小于16字节")
+	}
+	if len(key) > 48 {
+		return nil, errors.New("加密密钥长度不能大于48字节")
+	}
+	
 	// 确保密钥长度为256位(32字节)
 	if len(key) != 32 {
 		// 使用SHA-256哈希生成固定长度的密钥
@@ -608,9 +621,8 @@ func NewAESEncryption(key []byte) (*AESEncryption, error) {
 
 // Encrypt 加密文本
 func (e *AESEncryption) Encrypt(plaintext string) (string, error) {
-	if plaintext == "" {
-		return "", nil
-	}
+	// 即使是空字符串也要加密，以确保一致的安全行为
+	// 空字符串不应该直接返回空，而应该加密成有效的密文
 	
 	// 创建AES cipher
 	block, err := aes.NewCipher(e.key)
@@ -639,8 +651,9 @@ func (e *AESEncryption) Encrypt(plaintext string) (string, error) {
 
 // Decrypt 解密文本
 func (e *AESEncryption) Decrypt(ciphertext string) (string, error) {
+	// 空密文应该返回错误，而不是直接返回空字符串
 	if ciphertext == "" {
-		return "", nil
+		return "", errors.New("密文不能为空")
 	}
 	
 	// Base64解码

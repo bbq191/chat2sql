@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"net/http"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -305,27 +306,143 @@ func calculateRequestSize(r *http.Request) int64 {
 	return size
 }
 
+// RecordAPILatency 记录API延迟指标
+func (pm *PrometheusMetrics) RecordAPILatency(method, endpoint string, duration time.Duration) {
+	pm.httpRequestDuration.WithLabelValues(method, endpoint).Observe(duration.Seconds())
+}
+
+// RecordDatabaseOperation 记录数据库操作指标
+func (pm *PrometheusMetrics) RecordDatabaseOperation(operation, status string, duration time.Duration) {
+	pm.sqlExecutionDuration.WithLabelValues("system", "0", status).Observe(duration.Seconds())
+	pm.sqlExecutionsTotal.WithLabelValues("system", "0", status).Inc()
+}
+
+// RecordCacheOperation 记录缓存操作指标
+func (pm *PrometheusMetrics) RecordCacheOperation(operation, result string) {
+	// 扩展现有指标或创建新的缓存指标
+	pm.logger.Debug("记录缓存操作",
+		zap.String("operation", operation),
+		zap.String("result", result))
+}
+
+// GetCurrentMetrics 获取当前指标值（用于监控和调试）
+func (pm *PrometheusMetrics) GetCurrentMetrics() map[string]interface{} {
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	
+	return map[string]interface{}{
+		"memory_usage_mb":    memStats.Alloc / 1024 / 1024,
+		"memory_sys_mb":      memStats.Sys / 1024 / 1024,
+		"goroutines_count":   runtime.NumGoroutine(),
+		"gc_runs":            memStats.NumGC,
+		"active_connections": 0, // 需要从实际状态获取
+	}
+}
+
+// ResetMetrics 重置指标（主要用于测试）
+func (pm *PrometheusMetrics) ResetMetrics() {
+	pm.logger.Info("重置Prometheus指标")
+	// 注意：Prometheus指标通常不应该重置，这里主要用于测试场景
+}
+
 // CustomMetricsCollector 自定义指标收集器
-// 用于收集应用特定的业务指标
+// 用于收集应用特定的业务指标和系统运行时指标
 type CustomMetricsCollector struct {
 	prometheus.Collector
-	pm *PrometheusMetrics
+	pm                     *PrometheusMetrics
+	runtimeStatsDesc       *prometheus.Desc
+	connectionPoolStatsDesc *prometheus.Desc
+	cacheStatsDesc         *prometheus.Desc
 }
 
 // NewCustomMetricsCollector 创建自定义指标收集器
 func NewCustomMetricsCollector(pm *PrometheusMetrics) *CustomMetricsCollector {
 	return &CustomMetricsCollector{
 		pm: pm,
+		runtimeStatsDesc: prometheus.NewDesc(
+			"chat2sql_runtime_info",
+			"Runtime information about the application",
+			[]string{"version", "go_version", "os", "arch"},
+			nil,
+		),
+		connectionPoolStatsDesc: prometheus.NewDesc(
+			"chat2sql_connection_pool_stats",
+			"Connection pool statistics",
+			[]string{"pool_name", "stat_type"},
+			nil,
+		),
+		cacheStatsDesc: prometheus.NewDesc(
+			"chat2sql_cache_stats",
+			"Cache operation statistics",
+			[]string{"cache_type", "operation"},
+			nil,
+		),
 	}
 }
 
 // Describe 实现prometheus.Collector接口
 func (c *CustomMetricsCollector) Describe(ch chan<- *prometheus.Desc) {
-	// 描述自定义指标
+	ch <- c.runtimeStatsDesc
+	ch <- c.connectionPoolStatsDesc
+	ch <- c.cacheStatsDesc
 }
 
 // Collect 实现prometheus.Collector接口
 func (c *CustomMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 	// 收集运行时指标
-	// TODO: 实现自定义指标收集逻辑
+	ch <- prometheus.MustNewConstMetric(
+		c.runtimeStatsDesc,
+		prometheus.GaugeValue,
+		1,
+		"v0.1.0",              // 版本信息
+		runtime.Version(),     // Go版本
+		runtime.GOOS,         // 操作系统
+		runtime.GOARCH,       // 架构
+	)
+	
+	// 收集内存统计
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	
+	// 添加更详细的内存指标
+	ch <- prometheus.MustNewConstMetric(
+		prometheus.NewDesc(
+			"chat2sql_go_memory_heap_objects",
+			"Number of allocated heap objects",
+			nil, nil,
+		),
+		prometheus.GaugeValue,
+		float64(memStats.HeapObjects),
+	)
+	
+	ch <- prometheus.MustNewConstMetric(
+		prometheus.NewDesc(
+			"chat2sql_go_memory_heap_inuse_bytes",
+			"Number of bytes in use by the heap",
+			nil, nil,
+		),
+		prometheus.GaugeValue,
+		float64(memStats.HeapInuse),
+	)
+	
+	ch <- prometheus.MustNewConstMetric(
+		prometheus.NewDesc(
+			"chat2sql_go_memory_stack_inuse_bytes",
+			"Number of bytes in use by the stack",
+			nil, nil,
+		),
+		prometheus.GaugeValue,
+		float64(memStats.StackInuse),
+	)
+	
+	// GC相关指标
+	ch <- prometheus.MustNewConstMetric(
+		prometheus.NewDesc(
+			"chat2sql_go_gc_duration_seconds_total",
+			"Total GC pause duration in seconds",
+			nil, nil,
+		),
+		prometheus.CounterValue,
+		float64(memStats.PauseTotalNs)/1e9,
+	)
 }

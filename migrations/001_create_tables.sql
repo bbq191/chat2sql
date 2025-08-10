@@ -34,40 +34,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- ========================================
--- 2. SQL查询历史表 (AI查询追溯与审计)
--- ========================================  
--- 记录完整的查询链路：自然语言 -> SQL -> 执行结果
--- 预估数据量：100万条/月，需要按时间分区优化
--- 存储优化：启用压缩，定期归档历史数据
-CREATE TABLE IF NOT EXISTS query_history (
-    id              BIGSERIAL PRIMARY KEY,
-    user_id         BIGINT NOT NULL REFERENCES users(id),
-    natural_query   TEXT NOT NULL,                    -- 用户输入的自然语言查询
-    generated_sql   TEXT NOT NULL,                    -- AI生成的SQL语句  
-    sql_hash        VARCHAR(64) NOT NULL,             -- SQL语句hash，用于去重和缓存
-    execution_time  INTEGER,                          -- 执行时间(毫秒)
-    result_rows     INTEGER,                          -- 结果行数
-    result_size     BIGINT,                           -- 结果数据大小(字节)
-    status          VARCHAR(20) NOT NULL DEFAULT 'pending' 
-                    CHECK (status IN ('pending', 'success', 'error', 'timeout', 'cached')),
-    error_message   TEXT,                             -- 错误信息详情
-    error_code      VARCHAR(20),                      -- 错误代码分类
-    connection_id   BIGINT REFERENCES database_connections(id), -- 使用的数据库连接
-    ai_model        VARCHAR(50),                      -- 使用的AI模型
-    ai_confidence   DECIMAL(3,2),                     -- AI置信度(0.00-1.00)
-    query_complexity VARCHAR(20) DEFAULT 'simple'     -- 查询复杂度：simple/medium/complex
-                    CHECK (query_complexity IN ('simple', 'medium', 'complex'))
-    
-    -- 统一基础字段
-    create_by       BIGINT NOT NULL REFERENCES users(id),
-    create_time     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    update_by       BIGINT NOT NULL REFERENCES users(id),
-    update_time     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    is_deleted      BOOLEAN DEFAULT FALSE NOT NULL
-);
-
--- ========================================
--- 3. 数据库连接配置表 (多数据源管理)
+-- 2. 数据库连接配置表 (多数据源管理)
 -- ========================================
 -- 支持多种数据库类型，密码AES加密存储，连接池管理
 -- 预估数据量：1000个连接配置，频繁健康检查
@@ -99,8 +66,41 @@ CREATE TABLE IF NOT EXISTS database_connections (
     update_time     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     is_deleted      BOOLEAN DEFAULT FALSE NOT NULL,
     
-    -- 唯一约束：同一用户下连接名不能重复
-    UNIQUE(user_id, name) WHERE is_deleted = FALSE
+    -- 唯一约束：同一用户下连接名不能重复（部分唯一约束）
+    CONSTRAINT unique_user_connection_name UNIQUE (user_id, name)
+);
+
+-- ========================================
+-- 3. SQL查询历史表 (AI查询追溯与审计)
+-- ========================================  
+-- 记录完整的查询链路：自然语言 -> SQL -> 执行结果
+-- 预估数据量：100万条/月，需要按时间分区优化
+-- 存储优化：启用压缩，定期归档历史数据
+CREATE TABLE IF NOT EXISTS query_history (
+    id              BIGSERIAL PRIMARY KEY,
+    user_id         BIGINT NOT NULL REFERENCES users(id),
+    natural_query   TEXT NOT NULL,                    -- 用户输入的自然语言查询
+    generated_sql   TEXT NOT NULL,                    -- AI生成的SQL语句  
+    sql_hash        VARCHAR(64) NOT NULL,             -- SQL语句hash，用于去重和缓存
+    execution_time  INTEGER,                          -- 执行时间(毫秒)
+    result_rows     INTEGER,                          -- 结果行数
+    result_size     BIGINT,                           -- 结果数据大小(字节)
+    status          VARCHAR(20) NOT NULL DEFAULT 'pending' 
+                    CHECK (status IN ('pending', 'success', 'error', 'timeout', 'cached')),
+    error_message   TEXT,                             -- 错误信息详情
+    error_code      VARCHAR(20),                      -- 错误代码分类
+    connection_id   BIGINT REFERENCES database_connections(id), -- 使用的数据库连接
+    ai_model        VARCHAR(50),                      -- 使用的AI模型
+    ai_confidence   DECIMAL(3,2),                     -- AI置信度(0.00-1.00)
+    query_complexity VARCHAR(20) DEFAULT 'simple'     -- 查询复杂度：simple/medium/complex
+                    CHECK (query_complexity IN ('simple', 'medium', 'complex')),
+    
+    -- 统一基础字段
+    create_by       BIGINT NOT NULL REFERENCES users(id),
+    create_time     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    update_by       BIGINT NOT NULL REFERENCES users(id),
+    update_time     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    is_deleted      BOOLEAN DEFAULT FALSE NOT NULL
 );
 
 -- ========================================
@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS schema_metadata (
     cardinality     BIGINT,                          -- 列基数(唯一值数量)
     sample_values   TEXT[],                          -- 示例值数组(用于AI理解)
     data_category   VARCHAR(30),                     -- 数据类别：PII/财务/业务等
-    last_analyzed   TIMESTAMP WITH TIME ZONE         -- 最后分析时间
+    last_analyzed   TIMESTAMP WITH TIME ZONE,        -- 最后分析时间
     
     -- 统一基础字段
     create_by       BIGINT NOT NULL REFERENCES users(id),

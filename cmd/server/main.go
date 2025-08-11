@@ -20,6 +20,7 @@ import (
 	"chat2sql-go/internal/middleware"
 	"chat2sql-go/internal/metrics"
 	"chat2sql-go/internal/repository/postgres"
+	"chat2sql-go/internal/service"
 )
 
 func main() {
@@ -36,6 +37,7 @@ func main() {
 
 	// 初始化配置
 	dbConfig := config.DefaultDatabaseConfig()
+	redisConfig := config.DefaultRedisConfig()
 	jwtConfig := auth.DefaultJWTConfig()
 	metricsConfig := metrics.DefaultMetricsConfig()
 	
@@ -52,11 +54,18 @@ func main() {
 	}
 	logger.Info("Database connection established successfully")
 
+	// 初始化Redis连接
+	redisClient, err := config.NewRedisClient(redisConfig)
+	if err != nil {
+		logger.Fatal("Failed to initialize Redis client", zap.Error(err))
+	}
+	logger.Info("Redis connection established successfully")
+
 	// 初始化Repository层
 	repo := postgres.NewPostgreSQLRepository(dbManager.GetPool(), logger)
 	
 	// 初始化JWT服务
-	jwtService, err := auth.NewJWTService(jwtConfig, logger)
+	jwtService, err := auth.NewJWTService(jwtConfig, logger, redisClient)
 	if err != nil {
 		logger.Fatal("Failed to initialize JWT service", zap.Error(err))
 	}
@@ -68,12 +77,34 @@ func main() {
 
 	// 初始化Prometheus指标
 	prometheusMetrics := metrics.NewPrometheusMetrics(metricsConfig, logger)
+	
+	// 初始化SystemMonitor
+	systemMonitorConfig := metrics.DefaultSystemMonitorConfig()
+	systemMonitor := metrics.NewSystemMonitor(systemMonitorConfig, logger)
+
+	// 初始化Service层
+	// 生成AES加密密钥（开发环境）
+	encryptionKey := make([]byte, 32) // 256位密钥
+	copy(encryptionKey, []byte("chat2sql-encryption-key-123456"))
+	
+	// 创建连接管理器
+	connectionManager, err := service.NewConnectionManager(dbManager.GetPool(), repo.ConnectionRepo(), encryptionKey, logger)
+	if err != nil {
+		logger.Fatal("Failed to initialize connection manager", zap.Error(err))
+	}
+	
+	// 创建SQL执行器
+	sqlExecutor := service.NewSQLExecutor(dbManager.GetPool(), connectionManager, logger)
+
+	// 初始化健康检查服务
+	appInfo := config.DefaultAppInfo()
+	healthService := service.NewHealthService(repo, redisClient, appInfo, logger)
 
 	// 初始化处理器
 	authHandler := handler.NewAuthHandler(repo.UserRepo(), jwtService, logger)
-	userHandler := handler.NewUserHandler(repo.UserRepo(), logger)
-	sqlHandler := handler.NewSQLHandler(repo.QueryHistoryRepo(), repo.ConnectionRepo(), logger)
-	connectionHandler := handler.NewConnectionHandler(repo.ConnectionRepo(), repo.SchemaRepo(), logger)
+	userHandler := handler.NewUserHandler(repo.UserRepo(), repo.QueryHistoryRepo(), repo.ConnectionRepo(), logger)
+	sqlHandler := handler.NewSQLHandler(repo.QueryHistoryRepo(), repo.ConnectionRepo(), sqlExecutor, logger)
+	connectionHandler := handler.NewConnectionHandler(repo.ConnectionRepo(), repo.SchemaRepo(), connectionManager, logger)
 
 	// 初始化中间件
 	authMiddleware := middleware.NewAuthMiddleware(jwtService, logger)
@@ -99,6 +130,7 @@ func main() {
 		SQLHandler:        sqlHandler,
 		ConnectionHandler: connectionHandler,
 		AuthMiddleware:    authMiddleware,
+		HealthService:     healthService,
 	}
 	
 	handler.SetupRoutes(r, routerConfig)
@@ -109,7 +141,17 @@ func main() {
 	// 更新路由中的JWT认证中间件
 	updateRoutesWithJWTAuth(r, authMiddleware)
 
-	// 启动系统指标收集
+	// 启动SystemMonitor
+	monitorCtx, monitorCancel := context.WithCancel(context.Background())
+	defer monitorCancel()
+	
+	if err := systemMonitor.Start(monitorCtx); err != nil {
+		logger.Warn("启动SystemMonitor失败", zap.Error(err))
+	} else {
+		logger.Info("SystemMonitor启动成功")
+	}
+	
+	// 保留原有的系统指标收集作为备用
 	go collectSystemMetrics(prometheusMetrics, logger)
 
 	// 启动HTTP服务器
@@ -151,6 +193,13 @@ func main() {
 		logger.Info("Server gracefully stopped")
 	}
 
+	// 停止SystemMonitor
+	if err := systemMonitor.Stop(); err != nil {
+		logger.Warn("停止SystemMonitor失败", zap.Error(err))
+	} else {
+		logger.Info("SystemMonitor停止成功")
+	}
+	
 	// 关闭数据库连接
 	dbManager.Close()
 	logger.Info("Database connections closed")
@@ -161,7 +210,7 @@ func main() {
 // updateRoutesWithJWTAuth 更新路由以使用JWT认证中间件
 func updateRoutesWithJWTAuth(r *gin.Engine, authMiddleware *middleware.AuthMiddleware) {
 	// 这是一个临时方案，理想情况下应该在router.go中直接配置
-	// TODO: 重构路由配置以支持依赖注入
+	// 注意: 未来可重构路由配置以支持更好的依赖注入模式
 	
 	// 为受保护的路由组添加JWT认证
 	v1 := r.Group("/api/v1")

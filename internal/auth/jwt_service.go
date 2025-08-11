@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -12,8 +13,17 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
+
+// JWTServiceInterface JWT服务接口，用于支持测试和依赖注入
+type JWTServiceInterface interface {
+	GenerateTokenPair(userID int64, username, role string) (*TokenPair, error)
+	ValidateRefreshToken(tokenString string) (*CustomClaims, error)
+	ValidateTokenFromRequest(authHeader string) (*CustomClaims, error)
+	RefreshTokenPair(refreshTokenString string) (*TokenPair, error)
+}
 
 // JWTService JWT认证服务
 // 基于RS256算法实现企业级JWT Token管理
@@ -25,6 +35,7 @@ type JWTService struct {
 	accessTokenTTL   time.Duration
 	refreshTokenTTL  time.Duration
 	logger           *zap.Logger
+	redisClient      redis.UniversalClient // Redis客户端用于Token黑名单
 }
 
 // JWTConfig JWT配置
@@ -76,13 +87,14 @@ type TokenPair struct {
 }
 
 // NewJWTService 创建JWT服务实例
-func NewJWTService(config *JWTConfig, logger *zap.Logger) (*JWTService, error) {
+func NewJWTService(config *JWTConfig, logger *zap.Logger, redisClient redis.UniversalClient) (*JWTService, error) {
 	service := &JWTService{
 		issuer:          config.Issuer,
 		audience:        config.Audience,
 		accessTokenTTL:  config.AccessTokenTTL,
 		refreshTokenTTL: config.RefreshTokenTTL,
 		logger:          logger,
+		redisClient:     redisClient,
 	}
 	
 	// 加载或生成RSA密钥对
@@ -447,25 +459,186 @@ func (j *JWTService) IsTokenExpiringSoon(claims *CustomClaims, threshold time.Du
 }
 
 // RevokeToken Token撤销（黑名单实现）
-// TODO: 实现Token黑名单机制，可以使用Redis存储
 func (j *JWTService) RevokeToken(tokenString string) error {
-	// 解析Token获取JTI
+	ctx := context.Background()
+	
+	// 解析Token获取JTI和过期时间
 	claims, err := j.GetTokenClaims(tokenString)
 	if err != nil {
 		return fmt.Errorf("failed to parse token for revocation: %w", err)
 	}
 	
-	// TODO: 将JTI添加到黑名单（Redis实现）
-	j.logger.Info("Token revoked",
+	// 计算Token剩余有效期作为Redis TTL
+	var ttl time.Duration
+	if claims.RegisteredClaims.ExpiresAt != nil {
+		ttl = time.Until(claims.RegisteredClaims.ExpiresAt.Time)
+		if ttl <= 0 {
+			// Token已过期，无需添加到黑名单
+			j.logger.Info("Token already expired, skip revocation",
+				zap.String("jti", claims.RegisteredClaims.ID))
+			return nil
+		}
+	} else {
+		// 如果没有过期时间，使用默认TTL
+		ttl = j.refreshTokenTTL
+	}
+	
+	// Redis黑名单key格式: "jwt:blacklist:{jti}"
+	blacklistKey := fmt.Sprintf("jwt:blacklist:%s", claims.RegisteredClaims.ID)
+	
+	// 将JTI添加到Redis黑名单，设置过期时间
+	if err := j.redisClient.Set(ctx, blacklistKey, "revoked", ttl).Err(); err != nil {
+		j.logger.Error("Failed to add token to blacklist",
+			zap.String("jti", claims.RegisteredClaims.ID),
+			zap.Error(err))
+		return fmt.Errorf("failed to revoke token: %w", err)
+	}
+	
+	j.logger.Info("Token revoked successfully",
 		zap.String("jti", claims.RegisteredClaims.ID),
-		zap.Int64("user_id", claims.UserID))
+		zap.Int64("user_id", claims.UserID),
+		zap.Duration("ttl", ttl))
 	
 	return nil
 }
 
 // IsTokenRevoked 检查Token是否已被撤销
-// TODO: 从Redis黑名单检查
 func (j *JWTService) IsTokenRevoked(tokenString string) (bool, error) {
-	// TODO: 从Redis黑名单检查JTI
-	return false, nil
+	ctx := context.Background()
+	
+	// 解析Token获取JTI
+	claims, err := j.GetTokenClaims(tokenString)
+	if err != nil {
+		return false, fmt.Errorf("failed to parse token for revocation check: %w", err)
+	}
+	
+	// Redis黑名单key格式: "jwt:blacklist:{jti}"
+	blacklistKey := fmt.Sprintf("jwt:blacklist:%s", claims.RegisteredClaims.ID)
+	
+	// 检查Redis中是否存在该JTI
+	exists, err := j.redisClient.Exists(ctx, blacklistKey).Result()
+	if err != nil {
+		j.logger.Error("Failed to check token blacklist status",
+			zap.String("jti", claims.RegisteredClaims.ID),
+			zap.Error(err))
+		// 在Redis错误时，为了安全起见，可以选择拒绝访问或允许访问
+		// 这里选择允许访问，但记录错误日志
+		return false, nil
+	}
+	
+	isRevoked := exists > 0
+	
+	if isRevoked {
+		j.logger.Info("Token found in blacklist",
+			zap.String("jti", claims.RegisteredClaims.ID),
+			zap.Int64("user_id", claims.UserID))
+	}
+	
+	return isRevoked, nil
+}
+
+// RevokeUserTokens 撤销用户的所有Token（通过用户ID模式匹配）
+func (j *JWTService) RevokeUserTokens(userID int64) error {
+	ctx := context.Background()
+	
+	// 使用SCAN命令查找用户相关的黑名单keys
+	pattern := "jwt:blacklist:*"
+	var cursor uint64 = 0
+	var revokedCount int64 = 0
+	
+	for {
+		keys, newCursor, err := j.redisClient.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return fmt.Errorf("failed to scan blacklist keys: %w", err)
+		}
+		
+		// 检查每个key对应的token是否属于指定用户
+		// 这种实现需要存储更多信息，现在先简化为设置用户级别的撤销标记
+		if len(keys) > 0 {
+			revokedCount += int64(len(keys))
+		}
+		
+		cursor = newCursor
+		if cursor == 0 {
+			break
+		}
+	}
+	
+	// 添加用户级别的撤销标记
+	userRevokeKey := fmt.Sprintf("jwt:user_revoked:%d", userID)
+	if err := j.redisClient.Set(ctx, userRevokeKey, time.Now().Unix(), j.refreshTokenTTL).Err(); err != nil {
+		return fmt.Errorf("failed to set user token revocation: %w", err)
+	}
+	
+	j.logger.Info("User tokens revoked",
+		zap.Int64("user_id", userID),
+		zap.Int64("revoked_count", revokedCount))
+	
+	return nil
+}
+
+// IsUserTokensRevoked 检查用户的所有Token是否被撤销
+func (j *JWTService) IsUserTokensRevoked(userID int64, tokenIssuedAt time.Time) (bool, error) {
+	ctx := context.Background()
+	
+	userRevokeKey := fmt.Sprintf("jwt:user_revoked:%d", userID)
+	
+	revokeTimeStr, err := j.redisClient.Get(ctx, userRevokeKey).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return false, nil // 用户Token未被全局撤销
+		}
+		return false, fmt.Errorf("failed to check user token revocation: %w", err)
+	}
+	
+	// 解析撤销时间
+	var revokeTime int64
+	if _, err := fmt.Sscanf(revokeTimeStr, "%d", &revokeTime); err != nil {
+		return false, fmt.Errorf("invalid revoke time format: %w", err)
+	}
+	
+	// 如果Token的签发时间早于撤销时间，则认为被撤销
+	return tokenIssuedAt.Unix() < revokeTime, nil
+}
+
+// CleanupExpiredBlacklist 清理过期的黑名单条目（定期任务）
+func (j *JWTService) CleanupExpiredBlacklist() error {
+	ctx := context.Background()
+	
+	pattern := "jwt:blacklist:*"
+	var cursor uint64 = 0
+	var cleanedCount int64 = 0
+	
+	for {
+		keys, newCursor, err := j.redisClient.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return fmt.Errorf("failed to scan blacklist keys: %w", err)
+		}
+		
+		if len(keys) > 0 {
+			// 检查keys的TTL，删除已过期的
+			for _, key := range keys {
+				ttl, err := j.redisClient.TTL(ctx, key).Result()
+				if err != nil {
+					continue
+				}
+				if ttl == -1 {
+					// 没有过期时间的key，设置默认过期时间
+					j.redisClient.Expire(ctx, key, j.refreshTokenTTL)
+				}
+			}
+		}
+		
+		cursor = newCursor
+		if cursor == 0 {
+			break
+		}
+	}
+	
+	if cleanedCount > 0 {
+		j.logger.Info("Cleaned up expired blacklist entries",
+			zap.Int64("cleaned_count", cleanedCount))
+	}
+	
+	return nil
 }

@@ -25,6 +25,10 @@ type Manager struct {
 // 返回:
 //   - Manager实例和错误信息
 func NewManager(dbConfig *config.DatabaseConfig, logger *zap.Logger) (*Manager, error) {
+	if dbConfig == nil {
+		return nil, fmt.Errorf("数据库配置不能为空")
+	}
+	
 	if logger == nil {
 		logger = zap.NewNop() // 如果没有提供logger，使用空logger
 	}
@@ -81,6 +85,10 @@ func (m *Manager) GetPool() *pgxpool.Pool {
 // HealthCheck 执行数据库健康检查
 // 验证数据库连接是否正常，并记录连接池状态
 func (m *Manager) HealthCheck(ctx context.Context) error {
+	if m.pool == nil {
+		return fmt.Errorf("数据库连接池未初始化")
+	}
+	
 	// 设置健康检查超时
 	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

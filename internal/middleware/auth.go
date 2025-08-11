@@ -61,7 +61,7 @@ func (am *AuthMiddleware) JWTAuth() gin.HandlerFunc {
 			return
 		}
 		
-		// TODO: 检查Token是否被撤销（黑名单机制）
+		// 检查Token是否被撤销（黑名单机制）
 		isRevoked, err := am.jwtService.IsTokenRevoked(authHeader)
 		if err != nil {
 			am.logger.Error("Failed to check token revocation status",

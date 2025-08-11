@@ -1,28 +1,38 @@
 package handler
 
 import (
+	"context"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	
 	"chat2sql-go/internal/repository"
+	"chat2sql-go/internal/middleware"
 )
 
 // UserHandler 用户管理处理器
 // 处理用户资料管理、密码修改等用户相关操作
 type UserHandler struct {
-	userRepo repository.UserRepository
-	logger   *zap.Logger
+	userRepo         repository.UserRepository
+	queryHistoryRepo repository.QueryHistoryRepository
+	connectionRepo   repository.ConnectionRepository
+	logger           *zap.Logger
 }
 
 // NewUserHandler 创建用户处理器实例
-func NewUserHandler(userRepo repository.UserRepository, logger *zap.Logger) *UserHandler {
+func NewUserHandler(
+	userRepo repository.UserRepository,
+	queryHistoryRepo repository.QueryHistoryRepository,
+	connectionRepo repository.ConnectionRepository,
+	logger *zap.Logger,
+) *UserHandler {
 	return &UserHandler{
-		userRepo: userRepo,
-		logger:   logger,
+		userRepo:         userRepo,
+		queryHistoryRepo: queryHistoryRepo,
+		connectionRepo:   connectionRepo,
+		logger:           logger,
 	}
 }
 
@@ -64,7 +74,7 @@ type UserStats struct {
 // @Failure 500 {object} ErrorResponse "服务器内部错误"
 // @Router /api/v1/users/profile [get]
 func (h *UserHandler) GetProfile(c *gin.Context) {
-	// TODO: 从JWT Token中获取用户ID
+	// 从JWT Token中获取用户ID
 	userID := h.getUserIDFromContext(c)
 	if userID == 0 {
 		c.JSON(http.StatusUnauthorized, ErrorResponse{
@@ -88,11 +98,18 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 		return
 	}
 	
-	// TODO: 获取用户统计信息（需要QueryHistory和Connection Repository）
-	stats := &UserStats{
-		TotalQueries:      0, // TODO: 从QueryHistoryRepo获取
-		SuccessfulQueries: 0, // TODO: 从QueryHistoryRepo获取
-		TotalConnections:  0, // TODO: 从ConnectionRepo获取
+	// 获取用户统计信息
+	stats, err := h.getUserStatistics(c.Request.Context(), userID)
+	if err != nil {
+		h.logger.Warn("Failed to get user statistics",
+			zap.Error(err),
+			zap.Int64("user_id", userID))
+		// 统计信息失败不影响主要功能，使用默认值
+		stats = &UserStats{
+			TotalQueries:      0,
+			SuccessfulQueries: 0,
+			TotalConnections:  0,
+		}
 	}
 	
 	response := &UserProfileResponse{
@@ -104,7 +121,7 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 			Status:   user.Status,
 		},
 		Stats: stats,
-		// TODO: LastLogin字段需要在User模型中添加
+		LastLogin: user.LastLoginTime,
 	}
 	
 	c.JSON(http.StatusOK, response)
@@ -322,20 +339,12 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	})
 }
 
-// getUserIDFromContext 从Gin上下文获取用户ID
-// TODO: JWT中间件实现后，从上下文获取认证用户信息
+// getUserIDFromContext 从JWT中间件上下文获取用户ID
 func (h *UserHandler) getUserIDFromContext(c *gin.Context) int64 {
-	// 临时实现 - 从Header获取用户ID（仅用于开发测试）
-	userIDStr := c.GetHeader("X-User-ID")
-	if userIDStr == "" {
+	userID, exists := middleware.GetUserIDFromContext(c)
+	if !exists {
 		return 0
 	}
-	
-	userID, err := strconv.ParseInt(userIDStr, 10, 64)
-	if err != nil {
-		return 0
-	}
-	
 	return userID
 }
 
@@ -353,5 +362,46 @@ func NewSuccessResponse(code, message string) *SuccessResponse {
 		Message:   message,
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
+}
+
+// getUserStatistics 获取用户统计信息
+func (h *UserHandler) getUserStatistics(ctx context.Context, userID int64) (*UserStats, error) {
+	stats := &UserStats{}
+
+	// 获取查询总数
+	if h.queryHistoryRepo != nil {
+		totalQueries, err := h.queryHistoryRepo.CountByUser(ctx, userID)
+		if err != nil {
+			h.logger.Warn("Failed to get total queries count",
+				zap.Error(err),
+				zap.Int64("user_id", userID))
+		} else {
+			stats.TotalQueries = totalQueries
+		}
+
+		// 获取查询执行统计（包含成功查询数）
+		executionStats, err := h.queryHistoryRepo.GetExecutionStats(ctx, userID, 365) // 近一年统计
+		if err != nil {
+			h.logger.Warn("Failed to get execution stats",
+				zap.Error(err),
+				zap.Int64("user_id", userID))
+		} else if executionStats != nil {
+			stats.SuccessfulQueries = executionStats.SuccessfulQueries
+		}
+	}
+
+	// 获取连接总数
+	if h.connectionRepo != nil {
+		totalConnections, err := h.connectionRepo.CountByUser(ctx, userID)
+		if err != nil {
+			h.logger.Warn("Failed to get connections count",
+				zap.Error(err),
+				zap.Int64("user_id", userID))
+		} else {
+			stats.TotalConnections = totalConnections
+		}
+	}
+
+	return stats, nil
 }
 

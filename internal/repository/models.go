@@ -19,11 +19,12 @@ type BaseModel struct {
 // 支持基于角色的权限控制(RBAC)，包含用户基本信息和状态管理
 type User struct {
 	BaseModel
-	Username     string `json:"username" db:"username"`         // 用户名，唯一，3-50字符
-	Email        string `json:"email" db:"email"`               // 邮箱地址，唯一，用于登录和通知
-	PasswordHash string `json:"-" db:"password_hash"`           // 密码哈希，使用bcrypt加密，不返回给前端
-	Role         string `json:"role" db:"role"`                 // 用户角色：user/admin/manager
-	Status       string `json:"status" db:"status"`             // 用户状态：active/inactive/locked
+	Username      string     `json:"username" db:"username"`               // 用户名，唯一，3-50字符
+	Email         string     `json:"email" db:"email"`                     // 邮箱地址，唯一，用于登录和通知
+	PasswordHash  string     `json:"-" db:"password_hash"`                 // 密码哈希，使用bcrypt加密，不返回给前端
+	Role          string     `json:"role" db:"role"`                       // 用户角色：user/admin/manager
+	Status        string     `json:"status" db:"status"`                   // 用户状态：active/inactive/locked
+	LastLoginTime *time.Time `json:"last_login_time" db:"last_login_time"` // 最后登录时间
 }
 
 // QueryHistory SQL查询历史记录
@@ -33,6 +34,7 @@ type QueryHistory struct {
 	UserID        int64   `json:"user_id" db:"user_id"`               // 查询用户ID，外键关联users表
 	NaturalQuery  string  `json:"natural_query" db:"natural_query"`   // 用户输入的自然语言查询
 	GeneratedSQL  string  `json:"generated_sql" db:"generated_sql"`   // AI生成的SQL语句
+	SQLHash       string  `json:"sql_hash" db:"sql_hash"`             // SQL语句SHA-256哈希，用于去重和缓存
 	ExecutionTime *int32  `json:"execution_time" db:"execution_time"` // SQL执行时间，单位毫秒，可为空
 	ResultRows    *int32  `json:"result_rows" db:"result_rows"`       // 查询结果行数，可为空
 	Status        string  `json:"status" db:"status"`                 // 执行状态：pending/success/error/timeout

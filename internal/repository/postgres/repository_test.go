@@ -187,7 +187,12 @@ func testQueryHistoryRepository(t *testing.T, repo repository.Repository) {
 	queryRepo := repo.QueryHistoryRepo()
 	
 	// 创建测试查询历史
+	testUserID := int64(1)
 	query := &repository.QueryHistory{
+		BaseModel: repository.BaseModel{
+			CreateBy: &testUserID,
+			UpdateBy: &testUserID,
+		},
 		UserID:       1, // 假设存在用户ID 1
 		NaturalQuery: "查询所有用户",
 		GeneratedSQL: "SELECT * FROM users",
@@ -238,7 +243,12 @@ func testConnectionRepository(t *testing.T, repo repository.Repository) {
 	connRepo := repo.ConnectionRepo()
 	
 	// 创建测试连接
+	testUserID := int64(1)
 	conn := &repository.DatabaseConnection{
+		BaseModel: repository.BaseModel{
+			CreateBy: &testUserID,
+			UpdateBy: &testUserID,
+		},
 		UserID:            1, // 假设存在用户ID 1
 		Name:              "test_conn_" + time.Now().Format("20060102150405"),
 		Host:              "localhost",
@@ -290,7 +300,12 @@ func testSchemaRepository(t *testing.T, repo repository.Repository) {
 	schemaRepo := repo.SchemaRepo()
 	
 	// 创建测试元数据
+	testUserID := int64(1)
 	schema := &repository.SchemaMetadata{
+		BaseModel: repository.BaseModel{
+			CreateBy: &testUserID,
+			UpdateBy: &testUserID,
+		},
 		ConnectionID:     1, // 假设存在连接ID 1
 		SchemaName:       "public",
 		TableName:        "test_table",

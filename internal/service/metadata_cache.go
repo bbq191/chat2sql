@@ -363,6 +363,9 @@ func (mc *MetadataCache) buildTableSummary(schemaMetadataList []*repository.Sche
 	}
 
 	first := schemaMetadataList[0]
+	if first == nil {
+		return ""
+	}
 	summary := fmt.Sprintf("表 %s.%s", first.SchemaName, first.TableName)
 
 	if first.TableComment != nil {
@@ -372,6 +375,9 @@ func (mc *MetadataCache) buildTableSummary(schemaMetadataList []*repository.Sche
 	summary += ":\n"
 
 	for _, metadata := range schemaMetadataList {
+		if metadata == nil {
+			continue
+		}
 		summary += fmt.Sprintf("  - %s (%s)", metadata.ColumnName, metadata.DataType)
 
 		if metadata.IsPrimaryKey {
@@ -490,9 +496,13 @@ func (mc *MetadataCache) findRelevantTables(_ context.Context, connectionID int6
 
 		for _, tables := range cachedSchema.Tables {
 			for _, table := range tables {
-				if strings.Contains(strings.ToLower(table), lowerPattern) ||
-					strings.Contains(lowerPattern, strings.ToLower(table)) {
-					relevantTables = append(relevantTables, table)
+				lowerTable := strings.ToLower(table)
+				// 检查模式词汇是否与表名相关
+				for _, word := range strings.Fields(lowerPattern) {
+					if strings.Contains(lowerTable, word) || strings.Contains(word, lowerTable) {
+						relevantTables = append(relevantTables, table)
+						break
+					}
 				}
 			}
 		}

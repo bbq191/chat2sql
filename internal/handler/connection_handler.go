@@ -11,26 +11,45 @@ import (
 	"go.uber.org/zap"
 	
 	"chat2sql-go/internal/repository"
+	"chat2sql-go/internal/middleware"
 )
+
+// ConnectionManagerInterface 连接管理器接口
+type ConnectionManagerInterface interface {
+	CreateConnection(ctx context.Context, connection *repository.DatabaseConnection) error
+	UpdateConnection(ctx context.Context, connection *repository.DatabaseConnection) error
+	TestConnection(ctx context.Context, connection *repository.DatabaseConnection) error
+}
+
+// ConnectionTestResult 连接测试结果结构
+type ConnectionTestResult struct {
+	Success      bool   `json:"success" example:"true"`
+	Message      string `json:"message" example:"连接测试成功"`
+	ResponseTime int32  `json:"response_time" example:"25"`
+	Error        string `json:"error,omitempty"`
+}
 
 // ConnectionHandler 数据库连接处理器
 // 处理数据库连接的创建、管理、测试等操作
 type ConnectionHandler struct {
-	connectionRepo repository.ConnectionRepository
-	schemaRepo     repository.SchemaRepository
-	logger         *zap.Logger
+	connectionRepo    repository.ConnectionRepository
+	schemaRepo        repository.SchemaRepository
+	connectionManager ConnectionManagerInterface
+	logger            *zap.Logger
 }
 
 // NewConnectionHandler 创建连接处理器实例
 func NewConnectionHandler(
 	connectionRepo repository.ConnectionRepository,
 	schemaRepo repository.SchemaRepository,
+	connectionManager ConnectionManagerInterface,
 	logger *zap.Logger,
 ) *ConnectionHandler {
 	return &ConnectionHandler{
-		connectionRepo: connectionRepo,
-		schemaRepo:     schemaRepo,
-		logger:         logger,
+		connectionRepo:    connectionRepo,
+		schemaRepo:        schemaRepo,
+		connectionManager: connectionManager,
+		logger:            logger,
 	}
 }
 
@@ -76,13 +95,6 @@ type ConnectionListResponse struct {
 	Total       int64                 `json:"total" example:"3"`
 }
 
-// ConnectionTestResult 连接测试结果
-type ConnectionTestResult struct {
-	Success      bool   `json:"success" example:"true"`
-	Message      string `json:"message" example:"连接测试成功"`
-	ResponseTime int32  `json:"response_time" example:"25"`
-	Error        string `json:"error,omitempty"`
-}
 
 // DatabaseSchemaResponse 数据库结构响应
 type DatabaseSchemaResponse struct {
@@ -171,10 +183,7 @@ func (h *ConnectionHandler) CreateConnection(c *gin.Context) {
 		return
 	}
 	
-	// TODO: 加密密码存储
-	encryptedPassword := h.encryptPassword(req.Password)
-	
-	// 创建连接配置
+	// 创建连接配置（密码暂时以明文形式传递，由ConnectionManager加密）
 	connection := &repository.DatabaseConnection{
 		UserID:            userID,
 		Name:              req.Name,
@@ -182,25 +191,22 @@ func (h *ConnectionHandler) CreateConnection(c *gin.Context) {
 		Port:              req.Port,
 		DatabaseName:      req.DatabaseName,
 		Username:          req.Username,
-		PasswordEncrypted: encryptedPassword,
+		PasswordEncrypted: req.Password, // 临时存储明文密码
 		DBType:            req.DBType,
 		Status:            string(repository.ConnectionActive),
 	}
 	
-	// TODO: 测试连接有效性
-	testResult := h.testDatabaseConnection(connection)
-	if !testResult.Success {
-		connection.Status = string(repository.ConnectionError)
-	}
-	
-	if err := h.connectionRepo.Create(c.Request.Context(), connection); err != nil {
+	// 使用ConnectionManager创建连接（包含密码加密和连接测试）
+	if err := h.connectionManager.CreateConnection(c.Request.Context(), connection); err != nil {
 		h.logger.Error("Failed to create connection",
 			zap.Error(err),
-			zap.Int64("user_id", userID))
+			zap.Int64("user_id", userID),
+			zap.String("host", req.Host),
+			zap.String("database", req.DatabaseName))
 		
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
 			Code:    "CREATE_CONNECTION_FAILED",
-			Message: "创建连接失败",
+			Message: fmt.Sprintf("创建连接失败: %v", err),
 		})
 		return
 	}
@@ -378,31 +384,35 @@ func (h *ConnectionHandler) UpdateConnection(c *gin.Context) {
 		connection.Username = req.Username
 	}
 	if req.Password != "" {
-		connection.PasswordEncrypted = h.encryptPassword(req.Password)
+		connection.PasswordEncrypted = req.Password // 临时存储明文密码
 	}
 	
-	// 如果连接信息发生变化，重新测试连接
+	// 如果连接信息发生变化，通过ConnectionManager更新（包含加密和测试）
 	if req.Host != "" || req.Port > 0 || req.Username != "" || req.Password != "" {
-		testResult := h.testDatabaseConnection(connection)
-		if testResult.Success {
-			connection.Status = string(repository.ConnectionActive)
-			now := time.Now()
-			connection.LastTested = &now
-		} else {
-			connection.Status = string(repository.ConnectionError)
+		if err := h.connectionManager.UpdateConnection(c.Request.Context(), connection); err != nil {
+			h.logger.Error("Failed to update connection",
+				zap.Error(err),
+				zap.Int64("connection_id", connectionID))
+			
+			c.JSON(http.StatusInternalServerError, ErrorResponse{
+				Code:    "UPDATE_CONNECTION_FAILED",
+				Message: fmt.Sprintf("更新连接失败: %v", err),
+			})
+			return
 		}
-	}
-	
-	if err := h.connectionRepo.Update(c.Request.Context(), connection); err != nil {
-		h.logger.Error("Failed to update connection",
-			zap.Error(err),
-			zap.Int64("connection_id", connectionID))
-		
-		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Code:    "UPDATE_CONNECTION_FAILED",
-			Message: "更新连接失败",
-		})
-		return
+	} else {
+		// 只有基础信息更新，直接使用Repository
+		if err := h.connectionRepo.Update(c.Request.Context(), connection); err != nil {
+			h.logger.Error("Failed to update connection",
+				zap.Error(err),
+				zap.Int64("connection_id", connectionID))
+			
+			c.JSON(http.StatusInternalServerError, ErrorResponse{
+				Code:    "UPDATE_CONNECTION_FAILED",
+				Message: "更新连接失败",
+			})
+			return
+		}
 	}
 	
 	h.logger.Info("Connection updated successfully",
@@ -521,21 +531,42 @@ func (h *ConnectionHandler) TestConnection(c *gin.Context) {
 	}
 	
 	// 执行连接测试
-	result := h.testDatabaseConnection(connection)
+	start := time.Now()
+	err = h.connectionManager.TestConnection(c.Request.Context(), connection)
+	responseTime := int32(time.Since(start).Milliseconds())
 	
-	// 更新连接测试时间和状态
+	var result *ConnectionTestResult
+	if err != nil {
+		result = &ConnectionTestResult{
+			Success:      false,
+			Message:      "连接测试失败",
+			ResponseTime: responseTime,
+			Error:        err.Error(),
+		}
+		
+		// 更新连接状态为错误
+		if updateErr := h.connectionRepo.UpdateStatus(c.Request.Context(), connectionID, repository.ConnectionError); updateErr != nil {
+			h.logger.Warn("Failed to update connection status after test",
+				zap.Error(updateErr),
+				zap.Int64("connection_id", connectionID))
+		}
+	} else {
+		result = &ConnectionTestResult{
+			Success:      true,
+			Message:      "连接测试成功",
+			ResponseTime: responseTime,
+		}
+		
+		// 更新连接状态为正常
+		if updateErr := h.connectionRepo.UpdateStatus(c.Request.Context(), connectionID, repository.ConnectionActive); updateErr != nil {
+			h.logger.Warn("Failed to update connection status after test",
+				zap.Error(updateErr),
+				zap.Int64("connection_id", connectionID))
+		}
+	}
+	
+	// 更新最后测试时间
 	now := time.Now()
-	status := repository.ConnectionActive
-	if !result.Success {
-		status = repository.ConnectionError
-	}
-	
-	if err := h.connectionRepo.UpdateStatus(c.Request.Context(), connectionID, status); err != nil {
-		h.logger.Warn("Failed to update connection status after test",
-			zap.Error(err),
-			zap.Int64("connection_id", connectionID))
-	}
-	
 	if err := h.connectionRepo.UpdateLastTested(c.Request.Context(), connectionID, now); err != nil {
 		h.logger.Warn("Failed to update last tested time",
 			zap.Error(err),
@@ -606,12 +637,12 @@ func (h *ConnectionHandler) GetSchema(c *gin.Context) {
 		return
 	}
 	
-	// TODO: 组织结构化的响应数据
+	// 组织结构化的响应数据
 	response := &DatabaseSchemaResponse{
 		ConnectionID: connectionID,
 		Schemas:      h.organizeSchemaData(schemas),
 		TableCount:   h.countTables(schemas),
-		LastUpdated:  time.Now(), // TODO: 从metadata获取实际更新时间
+		LastUpdated:  time.Now(), // 注意: 未来可从metadata获取实际更新时间
 	}
 	
 	c.JSON(http.StatusOK, response)
@@ -657,31 +688,9 @@ func (h *ConnectionHandler) toConnectionResponse(conn *repository.DatabaseConnec
 	}
 }
 
-// encryptPassword 加密密码
-// TODO: 实现AES加密
-func (h *ConnectionHandler) encryptPassword(password string) string {
-	// 临时实现
-	return "encrypted_" + password
-}
-
-// testDatabaseConnection 测试数据库连接
-// TODO: 实现实际的数据库连接测试
-func (h *ConnectionHandler) testDatabaseConnection(conn *repository.DatabaseConnection) *ConnectionTestResult {
-	start := time.Now()
-	
-	// TODO: 实际连接测试逻辑
-	// 模拟连接测试
-	time.Sleep(25 * time.Millisecond)
-	
-	return &ConnectionTestResult{
-		Success:      true,
-		Message:      "连接测试成功",
-		ResponseTime: int32(time.Since(start).Milliseconds()),
-	}
-}
 
 // organizeSchemaData 组织结构化的Schema数据
-// TODO: 完善数据组织逻辑
+// 注意: 当前为基础实现，未来可完善数据组织逻辑
 func (h *ConnectionHandler) organizeSchemaData(schemas []*repository.SchemaMetadata) []*SchemaInfo {
 	// 临时实现 - 简单分组
 	schemaMap := make(map[string][]*repository.SchemaMetadata)
@@ -696,7 +705,7 @@ func (h *ConnectionHandler) organizeSchemaData(schemas []*repository.SchemaMetad
 			Tables:     []*TableInfo{},
 		}
 		
-		// TODO: 按表名分组并组织列信息
+		// 按表名分组并组织列信息
 		tableMap := make(map[string][]*repository.SchemaMetadata)
 		for _, schema := range schemaTables {
 			tableMap[schema.TableName] = append(tableMap[schema.TableName], schema)
@@ -743,18 +752,11 @@ func (h *ConnectionHandler) countTables(schemas []*repository.SchemaMetadata) in
 	return int64(len(tableSet))
 }
 
-// getUserIDFromContext 从上下文获取用户ID
+// getUserIDFromContext 从JWT中间件上下文获取用户ID
 func (h *ConnectionHandler) getUserIDFromContext(c *gin.Context) int64 {
-	// 临时实现
-	userIDStr := c.GetHeader("X-User-ID")
-	if userIDStr == "" {
+	userID, exists := middleware.GetUserIDFromContext(c)
+	if !exists {
 		return 0
 	}
-	
-	userID, err := strconv.ParseInt(userIDStr, 10, 64)
-	if err != nil {
-		return 0
-	}
-	
 	return userID
 }

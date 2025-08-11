@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -232,7 +233,7 @@ func (suite *PostgreSQLRepositoryTestSuite) TestUserRepository_CRUD() {
 	// 验证软删除后用户不能通过常规方法查询到
 	_, err = userRepo.GetByID(ctx, user.ID)
 	assert.Error(t, err)
-	assert.Equal(t, repository.ErrNotFound, err)
+	assert.True(t, repository.IsNotFound(err), "应该返回记录不存在错误")
 	
 	t.Logf("用户软删除成功，耗时: %v", deleteDuration)
 }
@@ -360,14 +361,19 @@ func (suite *PostgreSQLRepositoryTestSuite) TestQueryHistoryRepository_CRUD() {
 	// 测试创建查询历史
 	executionTime := int32(150)
 	resultRows := int32(25)
-	connectionID := int64(1)
 	errorMsg := ""
+	generatedSQL := "SELECT * FROM users WHERE status = 'active'"
 	
 	query := &repository.QueryHistory{
+		BaseModel: repository.BaseModel{
+			CreateBy: &user.ID,
+			UpdateBy: &user.ID,
+		},
 		UserID:        user.ID,
-		ConnectionID:  &connectionID,
+		ConnectionID:  nil, // 设置为nil避免外键约束问题
 		NaturalQuery:  "查询所有活跃用户",
-		GeneratedSQL:  "SELECT * FROM users WHERE status = 'active'",
+		GeneratedSQL:  generatedSQL,
+		SQLHash:       generateSQLHash(generatedSQL),
 		Status:        string(repository.QuerySuccess),
 		ExecutionTime: &executionTime,
 		ResultRows:    &resultRows,
@@ -449,14 +455,18 @@ func (suite *PostgreSQLRepositoryTestSuite) TestQueryHistoryRepository_ListAndSe
 	for i, q := range queries {
 		executionTime := int32(100 + i*10)
 		resultRows := int32(10 + i*5)
-		connectionID := int64(1)
 		errorMsg := ""
 		
 		query := &repository.QueryHistory{
+			BaseModel: repository.BaseModel{
+				CreateBy: &user.ID,
+				UpdateBy: &user.ID,
+			},
 			UserID:        user.ID,
-			ConnectionID:  &connectionID,
+			ConnectionID:  nil, // 设置为nil避免外键约束问题
 			NaturalQuery:  q.natural,
 			GeneratedSQL:  q.sql,
+			SQLHash:       generateSQLHash(q.sql),
 			Status:        string(q.status),
 			ExecutionTime: &executionTime,
 			ResultRows:    &resultRows,
@@ -525,6 +535,10 @@ func (suite *PostgreSQLRepositoryTestSuite) TestConnectionRepository_CRUD() {
 	
 	// 测试创建数据库连接
 	conn := &repository.DatabaseConnection{
+		BaseModel: repository.BaseModel{
+			CreateBy: &user.ID,
+			UpdateBy: &user.ID,
+		},
 		UserID:            user.ID,
 		Name:              "测试PostgreSQL连接_" + fmt.Sprintf("%d", time.Now().UnixNano()),
 		Host:              "localhost",
@@ -608,7 +622,7 @@ func (suite *PostgreSQLRepositoryTestSuite) TestConnectionRepository_CRUD() {
 	// 验证软删除后连接不能通过常规方法查询到
 	_, err = connRepo.GetByID(ctx, conn.ID)
 	assert.Error(t, err)
-	assert.Equal(t, repository.ErrNotFound, err)
+	assert.True(t, repository.IsNotFound(err), "应该返回记录不存在错误")
 	
 	t.Logf("数据库连接软删除成功，耗时: %v", deleteDuration)
 }
@@ -635,6 +649,10 @@ func (suite *PostgreSQLRepositoryTestSuite) TestSchemaRepository_CRUD() {
 	
 	// 创建测试连接
 	conn := &repository.DatabaseConnection{
+		BaseModel: repository.BaseModel{
+			CreateBy: &user.ID,
+			UpdateBy: &user.ID,
+		},
 		UserID:            user.ID,
 		Name:              "Schema测试连接",
 		Host:              "localhost",
@@ -653,6 +671,10 @@ func (suite *PostgreSQLRepositoryTestSuite) TestSchemaRepository_CRUD() {
 	columnComment := "用户ID主键"
 	
 	schema := &repository.SchemaMetadata{
+		BaseModel: repository.BaseModel{
+			CreateBy: &user.ID,
+			UpdateBy: &user.ID,
+		},
 		ConnectionID:    conn.ID,
 		SchemaName:      "public",
 		TableName:       "users",
@@ -696,6 +718,10 @@ func (suite *PostgreSQLRepositoryTestSuite) TestSchemaRepository_CRUD() {
 	// 添加更多列的元数据
 	schemas := []*repository.SchemaMetadata{
 		{
+			BaseModel: repository.BaseModel{
+				CreateBy: &user.ID,
+				UpdateBy: &user.ID,
+			},
 			ConnectionID:    conn.ID,
 			SchemaName:      "public",
 			TableName:       "users",
@@ -708,6 +734,10 @@ func (suite *PostgreSQLRepositoryTestSuite) TestSchemaRepository_CRUD() {
 			ColumnComment:   &[]string{"用户名"}[0],
 		},
 		{
+			BaseModel: repository.BaseModel{
+				CreateBy: &user.ID,
+				UpdateBy: &user.ID,
+			},
 			ConnectionID:    conn.ID,
 			SchemaName:      "public",
 			TableName:       "users",
@@ -892,6 +922,13 @@ func (suite *PostgreSQLRepositoryTestSuite) TestRepository_Performance() {
 		
 		assert.Less(t, errorCount, totalOperations/10, "错误率应小于10%")
 	})
+}
+
+// generateSQLHash 生成SQL语句的SHA-256哈希值
+func generateSQLHash(sql string) string {
+	h := sha256.New()
+	h.Write([]byte(sql))
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
 // TestSuite 运行测试套件

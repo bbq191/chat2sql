@@ -16,12 +16,12 @@ import (
 // 处理用户注册、登录、Token刷新等认证相关操作
 type AuthHandler struct {
 	userRepo   repository.UserRepository
-	jwtService *auth.JWTService
+	jwtService auth.JWTServiceInterface
 	logger     *zap.Logger
 }
 
 // NewAuthHandler 创建认证处理器实例
-func NewAuthHandler(userRepo repository.UserRepository, jwtService *auth.JWTService, logger *zap.Logger) *AuthHandler {
+func NewAuthHandler(userRepo repository.UserRepository, jwtService auth.JWTServiceInterface, logger *zap.Logger) *AuthHandler {
 	return &AuthHandler{
 		userRepo:   userRepo,
 		jwtService: jwtService,

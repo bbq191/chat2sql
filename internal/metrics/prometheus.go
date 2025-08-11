@@ -32,6 +32,9 @@ type PrometheusMetrics struct {
 	memoryUsage          prometheus.Gauge
 	goroutineCount       prometheus.Gauge
 	
+	// 注册器
+	registry *prometheus.Registry
+	
 	logger *zap.Logger
 }
 
@@ -56,7 +59,8 @@ func DefaultMetricsConfig() *MetricsConfig {
 // NewPrometheusMetrics 创建Prometheus指标收集器
 func NewPrometheusMetrics(config *MetricsConfig, logger *zap.Logger) *PrometheusMetrics {
 	pm := &PrometheusMetrics{
-		logger: logger,
+		logger:   logger,
+		registry: prometheus.NewRegistry(),
 	}
 	
 	// 初始化HTTP请求指标
@@ -186,21 +190,21 @@ func NewPrometheusMetrics(config *MetricsConfig, logger *zap.Logger) *Prometheus
 // registerMetrics 注册所有指标到Prometheus
 func (pm *PrometheusMetrics) registerMetrics() {
 	// HTTP指标
-	prometheus.MustRegister(pm.httpRequestsTotal)
-	prometheus.MustRegister(pm.httpRequestDuration)
-	prometheus.MustRegister(pm.httpRequestSize)
-	prometheus.MustRegister(pm.httpResponseSize)
+	pm.registry.MustRegister(pm.httpRequestsTotal)
+	pm.registry.MustRegister(pm.httpRequestDuration)
+	pm.registry.MustRegister(pm.httpRequestSize)
+	pm.registry.MustRegister(pm.httpResponseSize)
 	
 	// 业务指标
-	prometheus.MustRegister(pm.sqlExecutionsTotal)
-	prometheus.MustRegister(pm.sqlExecutionDuration)
-	prometheus.MustRegister(pm.databaseConnectionsTotal)
-	prometheus.MustRegister(pm.userRegistrationsTotal)
+	pm.registry.MustRegister(pm.sqlExecutionsTotal)
+	pm.registry.MustRegister(pm.sqlExecutionDuration)
+	pm.registry.MustRegister(pm.databaseConnectionsTotal)
+	pm.registry.MustRegister(pm.userRegistrationsTotal)
 	
 	// 系统指标
-	prometheus.MustRegister(pm.activeConnections)
-	prometheus.MustRegister(pm.memoryUsage)
-	prometheus.MustRegister(pm.goroutineCount)
+	pm.registry.MustRegister(pm.activeConnections)
+	pm.registry.MustRegister(pm.memoryUsage)
+	pm.registry.MustRegister(pm.goroutineCount)
 }
 
 // HTTPMetricsMiddleware HTTP指标收集中间件
@@ -278,7 +282,7 @@ func (pm *PrometheusMetrics) UpdateSystemMetrics(memoryBytes int64, goroutines i
 
 // GetMetricsHandler 获取Prometheus指标端点处理器
 func (pm *PrometheusMetrics) GetMetricsHandler() gin.HandlerFunc {
-	h := promhttp.Handler()
+	h := promhttp.HandlerFor(pm.registry, promhttp.HandlerOpts{})
 	return func(c *gin.Context) {
 		h.ServeHTTP(c.Writer, c.Request)
 	}
@@ -313,7 +317,7 @@ func (pm *PrometheusMetrics) RecordAPILatency(method, endpoint string, duration 
 
 // RecordDatabaseOperation 记录数据库操作指标
 func (pm *PrometheusMetrics) RecordDatabaseOperation(operation, status string, duration time.Duration) {
-	pm.sqlExecutionDuration.WithLabelValues("system", "0", status).Observe(duration.Seconds())
+	pm.sqlExecutionDuration.WithLabelValues("system", "0").Observe(duration.Seconds())
 	pm.sqlExecutionsTotal.WithLabelValues("system", "0", status).Inc()
 }
 

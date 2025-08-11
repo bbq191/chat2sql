@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"chat2sql-go/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 	"net/http"
+	"time"
 )
 
 // RouterConfig 路由配置结构
@@ -12,7 +14,8 @@ type RouterConfig struct {
 	UserHandler       *UserHandler
 	SQLHandler        *SQLHandler
 	ConnectionHandler *ConnectionHandler
-	AuthMiddleware    AuthMiddleware // JWT认证中间件接口
+	AuthMiddleware    AuthMiddleware       // JWT认证中间件接口
+	HealthService     service.HealthServiceInterface // 健康检查服务接口
 }
 
 // AuthMiddleware JWT认证中间件接口
@@ -37,7 +40,7 @@ func SetupRoutes(r *gin.Engine, config *RouterConfig) {
 	}
 	
 	// 健康检查和系统监控端点
-	setupSystemRoutes(r)
+	setupSystemRoutes(r, config)
 }
 
 // setupGlobalMiddleware 配置全局中间件
@@ -100,47 +103,90 @@ func setupProtectedRoutes(rg *gin.RouterGroup, config *RouterConfig) {
 }
 
 // setupSystemRoutes 配置系统级路由
-func setupSystemRoutes(r *gin.Engine) {
-	// 健康检查端点
-	r.GET("/health", healthCheck)
-	r.GET("/ready", readinessCheck)
-	
-	// 系统信息端点
-	r.GET("/version", versionInfo)
+func setupSystemRoutes(r *gin.Engine, config *RouterConfig) {
+	if config.HealthService != nil {
+		// 健康检查端点
+		r.GET("/health", healthCheckHandler(config.HealthService))
+		r.GET("/ready", readinessCheckHandler(config.HealthService))
+		
+		// 系统信息端点
+		r.GET("/version", versionInfoHandler(config.HealthService))
+	} else {
+		// 降级到简单的健康检查
+		r.GET("/health", simpleHealthCheck)
+		r.GET("/ready", simpleReadinessCheck)
+		r.GET("/version", simpleVersionInfo)
+	}
 	
 	// Prometheus指标端点（由中间件提供）
 	// r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 }
 
-// healthCheck 健康检查处理器
-func healthCheck(c *gin.Context) {
+// healthCheckHandler 健康检查处理器
+func healthCheckHandler(healthService service.HealthServiceInterface) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		result := healthService.CheckHealth(c.Request.Context())
+		
+		// 根据健康状态设置HTTP状态码
+		httpStatus := http.StatusOK
+		if result.Status == "unhealthy" {
+			httpStatus = http.StatusServiceUnavailable
+		} else if result.Status == "degraded" {
+			httpStatus = http.StatusOK // 降级状态仍返回200，但在响应中标明
+		}
+		
+		c.JSON(httpStatus, result)
+	}
+}
+
+// readinessCheckHandler 就绪状态检查处理器
+func readinessCheckHandler(healthService service.HealthServiceInterface) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		result := healthService.CheckReadiness(c.Request.Context())
+		
+		// 就绪检查更严格，只有完全健康才返回200
+		httpStatus := http.StatusOK
+		if result.Status != "healthy" {
+			httpStatus = http.StatusServiceUnavailable
+		}
+		
+		c.JSON(httpStatus, result)
+	}
+}
+
+// versionInfoHandler 版本信息处理器
+func versionInfoHandler(healthService service.HealthServiceInterface) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		versionInfo := healthService.GetVersionInfo()
+		c.JSON(http.StatusOK, versionInfo)
+	}
+}
+
+// 简单的健康检查处理器（降级版本）
+func simpleHealthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":    "healthy",
-		"timestamp": "2024-01-08T12:00:00Z", // TODO: 使用实际时间
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
 		"service":   "chat2sql-api",
-		"version":   "0.1.0", // TODO: 从配置获取版本号
+		"version":   "0.1.0",
 	})
 }
 
-// readinessCheck 就绪状态检查
-func readinessCheck(c *gin.Context) {
-	// TODO: 检查数据库连接、依赖服务状态
+func simpleReadinessCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status": "ready",
-		"checks": gin.H{
-			"database": "ok",
-			"cache":    "ok",
+		"components": gin.H{
+			"service": "ok",
 		},
 	})
 }
 
-// versionInfo 版本信息
-func versionInfo(c *gin.Context) {
+func simpleVersionInfo(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"service":  "chat2sql-api",
-		"version":  "0.1.0",
+		"service":    "chat2sql-api",
+		"version":    "0.1.0",
 		"go_version": "1.24+",
-		"build_time": "2024-01-08T12:00:00Z", // TODO: 编译时注入
+		"build_time": "development",
 	})
 }
 

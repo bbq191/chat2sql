@@ -33,10 +33,10 @@ func NewPostgreSQLQueryHistoryRepository(pool *pgxpool.Pool, logger *zap.Logger)
 // Create 创建查询历史记录
 func (r *PostgreSQLQueryHistoryRepository) Create(ctx context.Context, query *repository.QueryHistory) error {
 	const sqlQuery = `
-		INSERT INTO query_history (user_id, natural_query, generated_sql, 
+		INSERT INTO query_history (user_id, natural_query, generated_sql, sql_hash,
 			execution_time, result_rows, status, error_message, connection_id,
 			create_by, create_time, update_by, update_time, is_deleted)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id`
 
 	now := time.Now().UTC()
@@ -45,6 +45,7 @@ func (r *PostgreSQLQueryHistoryRepository) Create(ctx context.Context, query *re
 		query.UserID,
 		query.NaturalQuery,
 		query.GeneratedSQL,
+		query.SQLHash,
 		query.ExecutionTime,
 		query.ResultRows,
 		query.Status,
@@ -82,7 +83,7 @@ func (r *PostgreSQLQueryHistoryRepository) Create(ctx context.Context, query *re
 // GetByID 根据ID获取查询历史记录
 func (r *PostgreSQLQueryHistoryRepository) GetByID(ctx context.Context, id int64) (*repository.QueryHistory, error) {
 	const sqlQuery = `
-		SELECT id, user_id, natural_query, generated_sql, execution_time,
+		SELECT id, user_id, natural_query, generated_sql, sql_hash, execution_time,
 			result_rows, status, error_message, connection_id,
 			create_by, create_time, update_by, update_time, is_deleted
 		FROM query_history 
@@ -95,6 +96,7 @@ func (r *PostgreSQLQueryHistoryRepository) GetByID(ctx context.Context, id int64
 		&query.UserID,
 		&query.NaturalQuery,
 		&query.GeneratedSQL,
+		&query.SQLHash,
 		&query.ExecutionTime,
 		&query.ResultRows,
 		&query.Status,
@@ -127,9 +129,9 @@ func (r *PostgreSQLQueryHistoryRepository) GetByID(ctx context.Context, id int64
 func (r *PostgreSQLQueryHistoryRepository) Update(ctx context.Context, query *repository.QueryHistory) error {
 	const sqlQuery = `
 		UPDATE query_history 
-		SET natural_query = $2, generated_sql = $3, execution_time = $4,
-			result_rows = $5, status = $6, error_message = $7,
-			connection_id = $8, update_by = $9, update_time = $10
+		SET natural_query = $2, generated_sql = $3, sql_hash = $4, execution_time = $5,
+			result_rows = $6, status = $7, error_message = $8,
+			connection_id = $9, update_by = $10, update_time = $11
 		WHERE id = $1 AND is_deleted = false`
 
 	now := time.Now().UTC()
@@ -138,6 +140,7 @@ func (r *PostgreSQLQueryHistoryRepository) Update(ctx context.Context, query *re
 		query.ID,
 		query.NaturalQuery,
 		query.GeneratedSQL,
+		query.SQLHash,
 		query.ExecutionTime,
 		query.ResultRows,
 		query.Status,
@@ -202,7 +205,7 @@ func (r *PostgreSQLQueryHistoryRepository) Delete(ctx context.Context, id int64)
 // ListByUser 根据用户ID分页获取查询历史
 func (r *PostgreSQLQueryHistoryRepository) ListByUser(ctx context.Context, userID int64, limit, offset int) ([]*repository.QueryHistory, error) {
 	const sqlQuery = `
-		SELECT id, user_id, natural_query, generated_sql, execution_time,
+		SELECT id, user_id, natural_query, generated_sql, sql_hash, execution_time,
 			result_rows, status, error_message, connection_id,
 			create_by, create_time, update_by, update_time, is_deleted
 		FROM query_history 
@@ -228,7 +231,7 @@ func (r *PostgreSQLQueryHistoryRepository) ListByUser(ctx context.Context, userI
 // ListByConnection 根据连接ID分页获取查询历史
 func (r *PostgreSQLQueryHistoryRepository) ListByConnection(ctx context.Context, connectionID int64, limit, offset int) ([]*repository.QueryHistory, error) {
 	const sqlQuery = `
-		SELECT id, user_id, natural_query, generated_sql, execution_time,
+		SELECT id, user_id, natural_query, generated_sql, sql_hash, execution_time,
 			result_rows, status, error_message, connection_id,
 			create_by, create_time, update_by, update_time, is_deleted
 		FROM query_history 
@@ -254,7 +257,7 @@ func (r *PostgreSQLQueryHistoryRepository) ListByConnection(ctx context.Context,
 // ListByStatus 根据状态分页获取查询历史
 func (r *PostgreSQLQueryHistoryRepository) ListByStatus(ctx context.Context, status repository.QueryStatus, limit, offset int) ([]*repository.QueryHistory, error) {
 	const sqlQuery = `
-		SELECT id, user_id, natural_query, generated_sql, execution_time,
+		SELECT id, user_id, natural_query, generated_sql, sql_hash, execution_time,
 			result_rows, status, error_message, connection_id,
 			create_by, create_time, update_by, update_time, is_deleted
 		FROM query_history 
@@ -280,7 +283,7 @@ func (r *PostgreSQLQueryHistoryRepository) ListByStatus(ctx context.Context, sta
 // ListRecent 获取用户最近N小时的查询历史
 func (r *PostgreSQLQueryHistoryRepository) ListRecent(ctx context.Context, userID int64, hours int, limit int) ([]*repository.QueryHistory, error) {
 	const sqlQuery = `
-		SELECT id, user_id, natural_query, generated_sql, execution_time,
+		SELECT id, user_id, natural_query, generated_sql, sql_hash, execution_time,
 			result_rows, status, error_message, connection_id,
 			create_by, create_time, update_by, update_time, is_deleted
 		FROM query_history 
@@ -443,7 +446,7 @@ func (r *PostgreSQLQueryHistoryRepository) GetPopularQueries(ctx context.Context
 // GetSlowQueries 获取慢查询列表
 func (r *PostgreSQLQueryHistoryRepository) GetSlowQueries(ctx context.Context, minExecutionTime int32, limit int) ([]*repository.QueryHistory, error) {
 	const sqlQuery = `
-		SELECT id, user_id, natural_query, generated_sql, execution_time,
+		SELECT id, user_id, natural_query, generated_sql, sql_hash, execution_time,
 			result_rows, status, error_message, connection_id,
 			create_by, create_time, update_by, update_time, is_deleted
 		FROM query_history 
@@ -468,7 +471,7 @@ func (r *PostgreSQLQueryHistoryRepository) GetSlowQueries(ctx context.Context, m
 // SearchByNaturalQuery 根据自然语言查询关键字搜索
 func (r *PostgreSQLQueryHistoryRepository) SearchByNaturalQuery(ctx context.Context, userID int64, keyword string, limit, offset int) ([]*repository.QueryHistory, error) {
 	const sqlQuery = `
-		SELECT id, user_id, natural_query, generated_sql, execution_time,
+		SELECT id, user_id, natural_query, generated_sql, sql_hash, execution_time,
 			result_rows, status, error_message, connection_id,
 			create_by, create_time, update_by, update_time, is_deleted
 		FROM query_history 
@@ -498,7 +501,7 @@ func (r *PostgreSQLQueryHistoryRepository) SearchByNaturalQuery(ctx context.Cont
 // SearchBySQL 根据SQL语句关键字搜索
 func (r *PostgreSQLQueryHistoryRepository) SearchBySQL(ctx context.Context, userID int64, keyword string, limit, offset int) ([]*repository.QueryHistory, error) {
 	const sqlQuery = `
-		SELECT id, user_id, natural_query, generated_sql, execution_time,
+		SELECT id, user_id, natural_query, generated_sql, sql_hash, execution_time,
 			result_rows, status, error_message, connection_id,
 			create_by, create_time, update_by, update_time, is_deleted
 		FROM query_history 
@@ -596,6 +599,7 @@ func (r *PostgreSQLQueryHistoryRepository) scanQueryHistory(rows pgx.Rows) ([]*r
 			&query.UserID,
 			&query.NaturalQuery,
 			&query.GeneratedSQL,
+			&query.SQLHash,
 			&query.ExecutionTime,
 			&query.ResultRows,
 			&query.Status,

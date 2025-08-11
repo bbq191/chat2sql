@@ -12,13 +12,22 @@ import (
 	"go.uber.org/zap"
 	
 	"chat2sql-go/internal/repository"
+	"chat2sql-go/internal/middleware"
+	"chat2sql-go/internal/service"
 )
+
+// SQLExecutorInterface SQL执行器接口 - 直接使用Service层的QueryResult
+type SQLExecutorInterface interface {
+	ExecuteQuery(ctx context.Context, sql string, connection *repository.DatabaseConnection) (*service.QueryResult, error)
+}
+
 
 // SQLHandler SQL查询处理器
 // 处理SQL执行、查询历史、语法验证等操作
 type SQLHandler struct {
 	queryRepo     repository.QueryHistoryRepository
 	connectionRepo repository.ConnectionRepository
+	sqlExecutor   SQLExecutorInterface  // SQL执行器
 	logger        *zap.Logger
 }
 
@@ -26,11 +35,13 @@ type SQLHandler struct {
 func NewSQLHandler(
 	queryRepo repository.QueryHistoryRepository,
 	connectionRepo repository.ConnectionRepository,
+	sqlExecutor SQLExecutorInterface,
 	logger *zap.Logger,
 ) *SQLHandler {
 	return &SQLHandler{
 		queryRepo:      queryRepo,
 		connectionRepo: connectionRepo,
+		sqlExecutor:    sqlExecutor,
 		logger:         logger,
 	}
 }
@@ -171,7 +182,7 @@ func (h *SQLHandler) ExecuteSQL(c *gin.Context) {
 			zap.Int64("user_id", userID))
 	}
 	
-	// TODO: 实际SQL执行逻辑（需要连接池管理器）
+	// 执行SQL查询
 	result := h.executeSQL(c.Request.Context(), req.SQL, connection)
 	
 	// 更新查询历史状态
@@ -240,7 +251,7 @@ func (h *SQLHandler) GetQueryHistory(c *gin.Context) {
 		params.Limit = 20
 	}
 	
-	// TODO: 根据参数调用不同的查询方法
+	// 根据参数调用不同的查询方法
 	var queries []*repository.QueryHistory
 	var err error
 	
@@ -473,70 +484,244 @@ func (h *SQLHandler) validateSQL(sql string) *SQLValidationResult {
 		result.IsReadOnly = false
 	}
 	
-	// TODO: 语法验证（可以集成SQL解析器）
-	// TODO: 提取表名（可以使用SQL解析器）
+	// 基础语法验证
+	if err := h.validateSQLSyntax(sql); err != nil {
+		result.IsValid = false
+		result.Errors = append(result.Errors, err.Error())
+	}
+	
+	// 提取表名
 	result.TablesUsed = h.extractTableNames(sql)
 	
 	return result
 }
 
-// executeSQL 执行SQL查询
-// TODO: 集成实际的数据库执行器
+// executeSQL 执行SQL查询 - 调用实际的SQL执行器
 func (h *SQLHandler) executeSQL(ctx context.Context, sql string, connection *repository.DatabaseConnection) *SQLExecutionResult {
-	start := time.Now()
+	// 调用Service层的SQL执行器
+	result, err := h.sqlExecutor.ExecuteQuery(ctx, sql, connection)
+	if err != nil {
+		// 如果result为nil，创建一个默认的错误结果
+		if result == nil {
+			return &SQLExecutionResult{
+				ExecutionTime: 0,
+				RowCount:      0,
+				Status:        string(repository.QueryError),
+				Error:         err.Error(),
+			}
+		}
+		return &SQLExecutionResult{
+			ExecutionTime: result.ExecutionTime,
+			RowCount:      0,
+			Status:        string(repository.QueryError),
+			Error:         result.Error,
+		}
+	}
 	
-	// 模拟SQL执行
-	time.Sleep(100 * time.Millisecond) // 模拟执行时间
-	
-	executionTime := int32(time.Since(start).Milliseconds())
-	
-	// TODO: 实际执行SQL并获取结果
-	// 临时返回模拟结果
+	// 转换Service层结果到Handler层结果格式
 	return &SQLExecutionResult{
-		ExecutionTime: executionTime,
-		RowCount:      10, // 模拟结果行数
-		Status:        string(repository.QuerySuccess),
-		Data: []map[string]any{
-			{"id": 1, "name": "用户1", "email": "user1@example.com"},
-			{"id": 2, "name": "用户2", "email": "user2@example.com"},
-		},
+		ExecutionTime: result.ExecutionTime,
+		RowCount:      result.RowCount,
+		Status:        result.Status,
+		Data:          result.Rows,
+		Error:         result.Error,
 	}
 }
 
-// extractTableNames 提取SQL中的表名
-// TODO: 集成专业的SQL解析器
-func (h *SQLHandler) extractTableNames(sql string) []string {
-	// 简单的表名提取逻辑
+// validateSQLSyntax 基础SQL语法验证
+func (h *SQLHandler) validateSQLSyntax(sql string) error {
+	sql = strings.TrimSpace(sql)
+	if sql == "" {
+		return fmt.Errorf("SQL语句不能为空")
+	}
+	
 	upperSQL := strings.ToUpper(sql)
+	
+	// 检查基本的SQL结构
+	sqlKeywords := []string{"SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "CREATE", "DROP", "ALTER"}
+	hasValidKeyword := false
+	for _, keyword := range sqlKeywords {
+		if strings.HasPrefix(upperSQL, keyword+" ") || upperSQL == keyword {
+			hasValidKeyword = true
+			break
+		}
+	}
+	
+	if !hasValidKeyword {
+		return fmt.Errorf("SQL语句必须以有效的SQL关键字开始")
+	}
+	
+	// 检查括号匹配
+	if err := h.validateParenthesesBalance(sql); err != nil {
+		return err
+	}
+	
+	// 检查引号匹配
+	if err := h.validateQuotesBalance(sql); err != nil {
+		return err
+	}
+	
+	// 检查基本结构（针对SELECT语句）
+	if strings.HasPrefix(upperSQL, "SELECT") {
+		if !strings.Contains(upperSQL, " FROM ") {
+			// 允许SELECT常量或函数，如 SELECT 1, SELECT NOW()
+			if !strings.Contains(upperSQL, "(") && len(strings.Fields(sql)) == 2 {
+				// SELECT <constant> 是合法的
+			} else if !strings.Contains(upperSQL, "FROM") {
+				return fmt.Errorf("SELECT语句通常需要包含FROM子句")
+			}
+		}
+	}
+	
+	return nil
+}
+
+// validateParenthesesBalance 验证括号匹配
+func (h *SQLHandler) validateParenthesesBalance(sql string) error {
+	stack := 0
+	inString := false
+	var stringChar rune
+	
+	for i, char := range sql {
+		switch char {
+		case '\'', '"':
+			if !inString {
+				inString = true
+				stringChar = char
+			} else if char == stringChar {
+				// 检查是否是转义字符
+				if i == 0 || sql[i-1] != '\\' {
+					inString = false
+				}
+			}
+		case '(':
+			if !inString {
+				stack++
+			}
+		case ')':
+			if !inString {
+				stack--
+				if stack < 0 {
+					return fmt.Errorf("括号不匹配：多余的右括号")
+				}
+			}
+		}
+	}
+	
+	if stack != 0 {
+		return fmt.Errorf("括号不匹配：未闭合的左括号")
+	}
+	
+	return nil
+}
+
+// validateQuotesBalance 验证引号匹配
+func (h *SQLHandler) validateQuotesBalance(sql string) error {
+	singleQuoteCount := 0
+	doubleQuoteCount := 0
+	
+	for i, char := range sql {
+		switch char {
+		case '\'':
+			// 检查是否是转义字符
+			if i == 0 || sql[i-1] != '\\' {
+				singleQuoteCount++
+			}
+		case '"':
+			// 检查是否是转义字符
+			if i == 0 || sql[i-1] != '\\' {
+				doubleQuoteCount++
+			}
+		}
+	}
+	
+	if singleQuoteCount%2 != 0 {
+		return fmt.Errorf("单引号不匹配")
+	}
+	
+	if doubleQuoteCount%2 != 0 {
+		return fmt.Errorf("双引号不匹配")
+	}
+	
+	return nil
+}
+
+// extractTableNames 提取SQL中的表名
+func (h *SQLHandler) extractTableNames(sql string) []string {
+	// 改进的表名提取逻辑
 	tables := []string{}
 	
-	// 查找FROM关键词后的表名
-	fromIndex := strings.Index(upperSQL, "FROM")
-	if fromIndex != -1 {
-		// 简化实现，仅提取第一个表名
-		parts := strings.Fields(sql[fromIndex+4:])
-		if len(parts) > 0 {
-			tableName := strings.Trim(parts[0], " \t\n\r(),")
-			tables = append(tables, tableName)
+	upperSQL := strings.ToUpper(sql)
+	
+	// 查找FROM关键词
+	fromIndex := strings.Index(upperSQL, " FROM ")
+	if fromIndex == -1 {
+		return tables
+	}
+	
+	// 提取FROM后到WHERE、ORDER BY、GROUP BY等关键词之间的内容
+	sqlAfterFrom := sql[fromIndex+6:]
+	
+	// 寻找可能的终止关键词
+	stopKeywords := []string{" WHERE ", " ORDER BY ", " GROUP BY ", " HAVING ", " LIMIT ", " UNION ", " EXCEPT ", " INTERSECT ", ";"}
+	stopIndex := len(sqlAfterFrom)
+	
+	for _, keyword := range stopKeywords {
+		if idx := strings.Index(strings.ToUpper(sqlAfterFrom), keyword); idx != -1 && idx < stopIndex {
+			stopIndex = idx
+		}
+	}
+	
+	tableClause := strings.TrimSpace(sqlAfterFrom[:stopIndex])
+	
+	// 简化处理：按逗号分割，处理JOIN
+	// 移除JOIN关键词并分割表名
+	tableClause = strings.ReplaceAll(strings.ToUpper(tableClause), " JOIN ", ", ")
+	tableClause = strings.ReplaceAll(tableClause, " LEFT JOIN ", ", ")
+	tableClause = strings.ReplaceAll(tableClause, " RIGHT JOIN ", ", ")
+	tableClause = strings.ReplaceAll(tableClause, " INNER JOIN ", ", ")
+	tableClause = strings.ReplaceAll(tableClause, " OUTER JOIN ", ", ")
+	tableClause = strings.ReplaceAll(tableClause, " FULL JOIN ", ", ")
+	
+	// 按逗号分割
+	tableParts := strings.Split(tableClause, ",")
+	
+	for _, part := range tableParts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		
+		// 提取表名（移除别名）
+		words := strings.Fields(part)
+		if len(words) > 0 {
+			tableName := words[0]
+			// 移除引号
+			tableName = strings.Trim(tableName, "\"'`")
+			if tableName != "" && !h.containsString(tables, tableName) {
+				tables = append(tables, tableName)
+			}
 		}
 	}
 	
 	return tables
 }
 
-// getUserIDFromContext 从上下文获取用户ID
-// TODO: JWT中间件实现后从Token解析
+// containsString 检查slice中是否包含指定的字符串
+func (h *SQLHandler) containsString(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+// getUserIDFromContext 从JWT中间件上下文获取用户ID
 func (h *SQLHandler) getUserIDFromContext(c *gin.Context) int64 {
-	// 临时实现 - 从Header获取
-	userIDStr := c.GetHeader("X-User-ID")
-	if userIDStr == "" {
+	userID, exists := middleware.GetUserIDFromContext(c)
+	if !exists {
 		return 0
 	}
-	
-	userID, err := strconv.ParseInt(userIDStr, 10, 64)
-	if err != nil {
-		return 0
-	}
-	
 	return userID
 }

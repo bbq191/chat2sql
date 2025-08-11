@@ -5,6 +5,8 @@ import (
 	"time"
 	
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/tracelog"
+	"go.uber.org/zap"
 )
 
 // DatabaseConfig PostgreSQL数据库连接配置
@@ -113,6 +115,11 @@ func (c *DatabaseConfig) Validate() error {
 
 // GetPoolConfig 获取pgxpool连接池配置
 func (c *DatabaseConfig) GetPoolConfig() (*pgxpool.Config, error) {
+	return c.GetPoolConfigWithLogger(nil)
+}
+
+// GetPoolConfigWithLogger 获取带日志的pgxpool连接池配置
+func (c *DatabaseConfig) GetPoolConfigWithLogger(logger *zap.Logger) (*pgxpool.Config, error) {
 	if err := c.Validate(); err != nil {
 		return nil, fmt.Errorf("数据库配置验证失败: %w", err)
 	}
@@ -130,8 +137,20 @@ func (c *DatabaseConfig) GetPoolConfig() (*pgxpool.Config, error) {
 	config.MaxConnIdleTime = c.MaxConnIdleTime
 	config.HealthCheckPeriod = c.HealthCheckPeriod
 	
-	// 配置查询日志（暂时简化实现）
-	// TODO: 在后续版本中集成zap日志系统
+	// 集成zap日志系统
+	if logger != nil && c.LogLevel != "none" {
+		pgxLogger := NewPgxZapLogger(logger.Named("pgx"), c.LogLevel)
+		
+		config.ConnConfig.Tracer = &tracelog.TraceLog{
+			Logger:   pgxLogger,
+			LogLevel: pgxLogger.GetLogLevel(),
+		}
+		
+		logger.Info("数据库日志系统已配置",
+			zap.String("log_level", c.LogLevel),
+			zap.Bool("log_slow_queries", c.LogSlowQueries),
+			zap.Duration("slow_query_threshold", c.SlowQueryThreshold))
+	}
 	
 	return config, nil
 }

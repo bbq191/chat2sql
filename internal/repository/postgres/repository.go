@@ -76,11 +76,11 @@ func (r *PostgreSQLRepository) BeginTx(ctx context.Context) (repository.TxReposi
 		tx:     tx,
 		logger: r.logger,
 
-		// 创建基于事务的子Repository（简化实现）
-		userRepo:         r.userRepo,         // 暂时复用非事务版本
-		queryHistoryRepo: r.queryHistoryRepo, // 暂时复用非事务版本
-		connectionRepo:   r.connectionRepo,   // 暂时复用非事务版本
-		schemaRepo:       r.schemaRepo,       // 暂时复用非事务版本
+		// 创建基于事务的子Repository
+		userRepo:         NewPostgreSQLTxUserRepository(tx, r.logger),
+		queryHistoryRepo: NewPostgreSQLTxQueryHistoryRepository(tx, r.logger),
+		connectionRepo:   NewPostgreSQLTxConnectionRepository(tx, r.logger),
+		schemaRepo:       NewPostgreSQLTxSchemaRepository(tx, r.logger),
 	}, nil
 }
 
@@ -167,6 +167,4 @@ func (r *PostgreSQLTxRepository) Rollback() error {
 	return nil
 }
 
-// 注意：在实际生产环境中，应该实现完整的事务版本Repository
-// 这里为了简洁，暂时复用非事务版本的Repository
-// TODO: 完整实现需要将所有Repository方法使用pgx.Tx而不是pgxpool.Pool重新实现
+// 注意：已实现用户Repository的事务版本，其他Repository待实现

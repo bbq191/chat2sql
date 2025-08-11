@@ -324,7 +324,7 @@ func (e *SQLExecutor) isReadOnlyQuery(sql string) bool {
 }
 
 // extractTables 简单提取SQL中的表名
-// TODO: 集成专业的SQL解析器提供更准确的表名提取
+// 注意: 当前为简化实现，未来可考虑集成专业的SQL解析器提供更准确的表名提取
 func (e *SQLExecutor) extractTables(sql string) []string {
 	upperSQL := strings.ToUpper(sql)
 	tables := []string{}

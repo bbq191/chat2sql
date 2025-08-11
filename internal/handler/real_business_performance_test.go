@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,7 @@ import (
 	"go.uber.org/zap"
 
 	"chat2sql-go/internal/auth"
+	"chat2sql-go/internal/config"
 	"chat2sql-go/internal/repository"
 	"chat2sql-go/internal/repository/postgres"
 	"chat2sql-go/internal/service"
@@ -124,9 +126,14 @@ func setupRealBusinessTestSuite(t *testing.T) *RealBusinessPerformanceTestSuite 
 	// 创建Repository
 	repo := postgres.NewPostgreSQLRepository(systemPool, logger)
 	
+	// 创建Redis客户端（用于JWT黑名单）
+	redisConfig := config.DefaultRedisConfig()
+	redisClient, err := config.NewRedisClient(redisConfig)
+	require.NoError(t, err)
+	
 	// 创建JWT服务
 	jwtConfig := auth.DefaultJWTConfig()
-	jwtService, err := auth.NewJWTService(jwtConfig, logger)
+	jwtService, err := auth.NewJWTService(jwtConfig, logger, redisClient)
 	require.NoError(t, err)
 	
 	// 创建连接管理器
@@ -188,6 +195,8 @@ func (s *RealBusinessPerformanceTestSuite) setupTestData(t *testing.T) {
 	
 	// 创建测试查询历史
 	executionTime := int32(100)
+	generatedSQL := "SELECT 1 as test"
+	sqlHash := fmt.Sprintf("%x", sha256.Sum256([]byte(generatedSQL)))
 	s.testQueryHistory = &repository.QueryHistory{
 		BaseModel: repository.BaseModel{
 			CreateBy: &s.testUser.ID,  // 设置创建者指针
@@ -196,7 +205,8 @@ func (s *RealBusinessPerformanceTestSuite) setupTestData(t *testing.T) {
 		UserID:        s.testUser.ID,
 		ConnectionID:  &s.testConnection.ID,
 		NaturalQuery:  "测试查询",
-		GeneratedSQL:  "SELECT 1 as test",
+		GeneratedSQL:  generatedSQL,
+		SQLHash:       sqlHash,
 		ExecutionTime: &executionTime,
 		Status:        string(repository.QuerySuccess),
 	}
@@ -713,11 +723,14 @@ func (s *RealBusinessPerformanceTestSuite) testRepositoryPerformance(t *testing.
 			queries := make([]*repository.QueryHistory, batchSize)
 			for j := 0; j < batchSize; j++ {
 				execTime := int32(50 + j)
+				generatedSQL := fmt.Sprintf("SELECT %d as batch_test", j)
+				sqlHash := fmt.Sprintf("%x", sha256.Sum256([]byte(generatedSQL)))
 				queries[j] = &repository.QueryHistory{
 					UserID:        s.testUser.ID,
 					ConnectionID:  &s.testConnection.ID,
 					NaturalQuery:  fmt.Sprintf("批量测试查询 %d-%d", i, j),
-					GeneratedSQL:  fmt.Sprintf("SELECT %d as batch_test", j),
+					GeneratedSQL:  generatedSQL,
+					SQLHash:       sqlHash,
 					ExecutionTime: &execTime,
 					Status:        string(repository.QuerySuccess),
 				}
@@ -1051,11 +1064,14 @@ func (s *RealBusinessPerformanceTestSuite) testTransactionPerformance(t *testing
 					
 					// 创建查询历史
 					execTime := int32(100)
+					generatedSQL := "SELECT 1"
+					sqlHash := fmt.Sprintf("%x", sha256.Sum256([]byte(generatedSQL)))
 					queryHistory := &repository.QueryHistory{
 						UserID:        testUser.ID,
 						ConnectionID:  &s.testConnection.ID,
 						NaturalQuery:  fmt.Sprintf("事务测试查询 %d-%d", workerID, j),
-						GeneratedSQL:  "SELECT 1",
+						GeneratedSQL:  generatedSQL,
+						SQLHash:       sqlHash,
 						ExecutionTime: &execTime,
 						Status:        string(repository.QuerySuccess),
 					}

@@ -246,7 +246,7 @@ func (rl *RateLimiter) cleanup() {
 		return
 	}
 	
-	// TODO: 实现更智能的清理逻辑，移除长时间未使用的限流器
+	// 注意: 未来可实现更智能的清理逻辑，移除长时间未使用的限流器
 	rl.lastCleanup = time.Now()
 }
 

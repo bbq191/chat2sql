@@ -330,11 +330,11 @@ func (pm *PrometheusMetrics) RecordCacheOperation(operation, result string) {
 }
 
 // GetCurrentMetrics 获取当前指标值（用于监控和调试）
-func (pm *PrometheusMetrics) GetCurrentMetrics() map[string]interface{} {
+func (pm *PrometheusMetrics) GetCurrentMetrics() map[string]any {
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 	
-	return map[string]interface{}{
+	return map[string]any{
 		"memory_usage_mb":    memStats.Alloc / 1024 / 1024,
 		"memory_sys_mb":      memStats.Sys / 1024 / 1024,
 		"goroutines_count":   runtime.NumGoroutine(),

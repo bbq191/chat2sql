@@ -172,7 +172,7 @@ func (j *JWTService) GenerateTokenPair(userID int64, username, role string) (*To
 // ValidateToken 验证Token
 func (j *JWTService) ValidateToken(tokenString string) (*CustomClaims, error) {
 	// 解析和验证Token
-	token, err := jwt.ParseWithClaims(tokenString, &CustomClaims{}, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &CustomClaims{}, func(token *jwt.Token) (any, error) {
 		// 验证签名算法
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -245,7 +245,7 @@ func (j *JWTService) RefreshTokenPair(refreshTokenString string) (*TokenPair, er
 
 // GetTokenClaims 获取Token Claims（不验证Token有效性）
 func (j *JWTService) GetTokenClaims(tokenString string) (*CustomClaims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &CustomClaims{}, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &CustomClaims{}, func(token *jwt.Token) (any, error) {
 		return j.publicKey, nil
 	}, jwt.WithoutClaimsValidation())
 	

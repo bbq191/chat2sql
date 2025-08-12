@@ -40,9 +40,9 @@ type StreamingConfig struct {
 type StreamResponse struct {
 	ID          string                 `json:"id"`
 	Type        StreamResponseType     `json:"type"`
-	Data        interface{}            `json:"data,omitempty"`
+	Data        any            `json:"data,omitempty"`
 	Error       *StreamError           `json:"error,omitempty"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
 	Timestamp   time.Time              `json:"timestamp"`
 	Sequence    int64                  `json:"sequence"`
 	IsComplete  bool                   `json:"is_complete"`
@@ -83,7 +83,7 @@ type StreamChunk struct {
 	Type       StreamChunkType    `json:"type"`
 	Progress   float64            `json:"progress"`
 	Confidence float64            `json:"confidence"`
-	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
 type StreamChunkType string
@@ -198,7 +198,7 @@ func (sp *StreamingProcessor) ProcessStreamingQuery(
 		Type:      StreamTypeStart,
 		Timestamp: time.Now(),
 		Sequence:  sequence,
-		Metadata: map[string]interface{}{
+		Metadata: map[string]any{
 			"query": req.Query,
 			"user_id": req.UserID,
 		},
@@ -275,7 +275,7 @@ func (sp *StreamingProcessor) ProcessStreamingQuery(
 				progressResponse := &StreamResponse{
 					ID:        streamID,
 					Type:      StreamTypeProgress,
-					Data:      map[string]interface{}{"progress": chunk.Progress},
+					Data:      map[string]any{"progress": chunk.Progress},
 					Timestamp: time.Now(),
 					Sequence:  sequence,
 				}
@@ -435,7 +435,7 @@ func (sp *StreamingProcessor) streamingLLMGeneration(
 					Type:       ChunkTypeGeneration,
 					Progress:   progress,
 					Confidence: 0.85,
-					Metadata: map[string]interface{}{
+					Metadata: map[string]any{
 						"accumulated_sql": sqlBuilder.String(),
 					},
 				})

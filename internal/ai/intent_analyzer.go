@@ -547,11 +547,13 @@ func (ia *IntentAnalyzer) extractQueryFeatures(query string) QueryFeatures {
 		RequiredFunctions: []string{},
 	}
 	
-	// 时间引用检测 (增强英文支持)
+	// 时间引用检测 (增强中文和英文支持)
 	timePatterns := []string{
 		`\b\d{4}年`, `\b\d{1,2}月`, `\b\d{1,2}日`,
 		`最近\d+`, `过去\d+`, `前\d+`, `last\s+\d+`, `past\s+\d+`,
-		`今天`, `昨天`, `明天`, `today`, `yesterday`, `tomorrow`,
+		`今天`, `昨天`, `明天`, `今年`, `去年`, `明年`, `本年`, `上年`, `下年`,
+		`今日`, `昨日`, `明日`, `本月`, `上月`, `下月`,
+		`today`, `yesterday`, `tomorrow`, `this\s+year`, `last\s+year`, `next\s+year`,
 		`(?i)\b(in|during|within|over)\s+the\s+(last|past|previous)\s+\d+\s+(days?|weeks?|months?|years?)\b`,
 		`(?i)\b(from|since|until|before|after)\s+\d{4}\b`,
 		`(?i)\b(this|next|last)\s+(year|month|week|quarter)\b`,
@@ -671,16 +673,21 @@ func (ia *IntentAnalyzer) extractQueryFeatures(query string) QueryFeatures {
 		}
 	}
 	
-	// 过滤检测 (增强英文支持)
+	// 过滤检测 (增强中文和英文支持)
 	filteringKeywords := []string{
 		"筛选", "过滤", "条件", "where", "满足", "符合", "包含",
+		"状态", "类型", "属性", "特定", "指定", "某个", "某些",
+		"活跃", "启用", "禁用", "有效", "无效", "正常", "异常",
 		"filter", "condition", "criteria", "restrict", "limit", "constrain",
 		"exclude", "include", "only", "specifically", "particularly",
+		"active", "inactive", "enabled", "disabled", "status", "type", "property",
 	}
 	filteringPatterns := []string{
 		`(?i)\b(where|with|having|that\s+(are|is|have|has))\b`,
 		`(?i)\b(only\s+those|just\s+the|specifically|particularly)\b`,
 		`(?i)\b(meeting\s+criteria|satisfying\s+condition|with\s+properties)\b`,
+		`\b[\u4e00-\u9fa5]+状态的`, // 中文状态模式，如"活跃状态的"
+		`\b[\u4e00-\u9fa5]+类型的`, // 中文类型模式
 	}
 	
 	for _, keyword := range filteringKeywords {
@@ -697,7 +704,7 @@ func (ia *IntentAnalyzer) extractQueryFeatures(query string) QueryFeatures {
 		}
 	}
 	
-	// JOIN检测 (增强英文支持)
+	// JOIN检测 (增强中文和英文支持)
 	joinKeywords := []string{
 		"关联", "连接", "联合", "join", "相关", "对应", "匹配",
 		"relate", "connect", "link", "associate", "combine", "merge",
@@ -712,6 +719,10 @@ func (ia *IntentAnalyzer) extractQueryFeatures(query string) QueryFeatures {
 		`(?i)\b(show|display|list|get)\s+\w+\s+with\s+(their|its|corresponding|related|associated)\b`,
 		`(?i)\b(users?\s+with\s+their|customers?\s+with\s+their|orders?\s+with\s+their)\b`,
 		`(?i)\b\w+\s+(and|with)\s+(their|its|corresponding|related|matching)\s+\w+\b`,
+		`用户.*订单`, `订单.*用户`, // 中文用户-订单关联模式
+		`客户.*订单`, `订单.*客户`, // 中文客户-订单关联模式
+		`每个用户的`, `每个客户的`, // "每个用户的订单"类似模式
+		`用户.*的.*订单`, `客户.*的.*订单`, // 更灵活的中文关联模式
 	}
 	
 	for _, keyword := range joinKeywords {
@@ -903,7 +914,7 @@ func (ia *IntentAnalyzer) buildIntentResult(scores map[QueryIntent]float64, feat
 		}
 		
 		for i := 1; i <= maxAlternatives; i++ {
-			if sortedScores[i].score >= sortedScores[0].score*0.5 { // 至少是主要意图分数的50%
+			if sortedScores[i].score >= sortedScores[0].score*0.3 { // 至少是主要意图分数的30%（降低阈值）
 				result.SecondaryIntents[sortedScores[i].intent] = ia.normalizeConfidence(sortedScores[i].score)
 			}
 		}

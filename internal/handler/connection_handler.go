@@ -56,7 +56,7 @@ func NewConnectionHandler(
 // CreateConnectionRequest 创建连接请求结构
 type CreateConnectionRequest struct {
 	Name         string `json:"name" binding:"required,min=1,max=100" example:"生产数据库"`
-	Host         string `json:"host" binding:"required,hostname_or_ip" example:"localhost"`
+	Host         string `json:"host" binding:"required" example:"localhost"`
 	Port         int32  `json:"port" binding:"required,min=1,max=65535" example:"5432"`
 	DatabaseName string `json:"database_name" binding:"required,min=1,max=100" example:"production_db"`
 	Username     string `json:"username" binding:"required,min=1,max=100" example:"db_user"`
@@ -67,7 +67,7 @@ type CreateConnectionRequest struct {
 // UpdateConnectionRequest 更新连接请求结构
 type UpdateConnectionRequest struct {
 	Name         string `json:"name" binding:"omitempty,min=1,max=100" example:"生产数据库"`
-	Host         string `json:"host" binding:"omitempty,hostname_or_ip" example:"localhost"`
+	Host         string `json:"host" binding:"omitempty" example:"localhost"`
 	Port         int32  `json:"port" binding:"omitempty,min=1,max=65535" example:"5432"`
 	DatabaseName string `json:"database_name" binding:"omitempty,min=1,max=100" example:"production_db"`
 	Username     string `json:"username" binding:"omitempty,min=1,max=100" example:"db_user"`

@@ -425,6 +425,13 @@ func (qp *QueryProcessor) buildStructuredPrompt(basePrompt string) string {
 
 // extractSQLFromText 从文本中提取SQL语句
 func (qp *QueryProcessor) extractSQLFromText(text string) string {
+	// 检查是否是JSON格式，如果是则跳过处理
+	trimmedText := strings.TrimSpace(text)
+	if strings.HasPrefix(trimmedText, "{") && strings.HasSuffix(trimmedText, "}") {
+		// JSON格式的响应不处理
+		return ""
+	}
+	
 	// 简单的SQL提取逻辑
 	lines := strings.Split(text, "\n")
 	

@@ -205,8 +205,8 @@ func (config *AIModuleConfig) ValidateConfig() error {
 }
 
 // GetEnvironmentInfo 获取环境信息摘要
-func (config *AIModuleConfig) GetEnvironmentInfo() map[string]interface{} {
-	info := make(map[string]interface{})
+func (config *AIModuleConfig) GetEnvironmentInfo() map[string]any {
+	info := make(map[string]any)
 	
 	if config.GlobalConfig != nil {
 		info["environment"] = config.GlobalConfig.Environment
@@ -262,8 +262,8 @@ func (config *AIModuleConfig) GetHTTPClient() *HTTPClient {
 }
 
 // 配置导出功能
-func (config *AIModuleConfig) ExportConfig() map[string]interface{} {
-	result := make(map[string]interface{})
+func (config *AIModuleConfig) ExportConfig() map[string]any {
+	result := make(map[string]any)
 	
 	result["global"] = config.GlobalConfig
 	result["performance"] = config.PerformanceConfig
@@ -273,7 +273,7 @@ func (config *AIModuleConfig) ExportConfig() map[string]interface{} {
 	
 	// 不导出敏感的LLM配置（API密钥等）
 	if config.LLMConfig != nil {
-		llmSafe := map[string]interface{}{
+		llmSafe := map[string]any{
 			"primary_provider":  config.LLMConfig.PrimaryProvider,
 			"fallback_provider": config.LLMConfig.FallbackProvider,
 			"local_provider":    config.LLMConfig.LocalProvider,

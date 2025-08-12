@@ -121,7 +121,7 @@ func NewPerformanceOptimizer(config *PerformanceConfig, logger *zap.Logger) *Per
 
 	// 初始化对象池，减少GC压力
 	objectPool := sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return &QueryProcessor{
 				// 初始化可重用的QueryProcessor
 			}
@@ -575,14 +575,14 @@ func (cb *CircuitBreaker) recordFailure() {
 }
 
 // GetMetrics 获取性能指标
-func (po *PerformanceOptimizer) GetMetrics() map[string]interface{} {
+func (po *PerformanceOptimizer) GetMetrics() map[string]any {
 	po.mu.RLock()
 	defer po.mu.RUnlock()
 
 	queueSize := len(po.workerPool.jobQueue)
 	po.metrics.queueDepth.Set(float64(queueSize))
 
-	return map[string]interface{}{
+	return map[string]any{
 		"worker_count":        po.workerPool.workers,
 		"queue_size":          queueSize,
 		"queue_depth":         queueSize, // 测试期望的字段
@@ -595,7 +595,7 @@ func (po *PerformanceOptimizer) GetMetrics() map[string]interface{} {
 }
 
 // getCircuitBreakerStatus 获取熔断器状态
-func (po *PerformanceOptimizer) getCircuitBreakerStatus() map[string]interface{} {
+func (po *PerformanceOptimizer) getCircuitBreakerStatus() map[string]any {
 	po.circuitBreaker.mu.RLock()
 	defer po.circuitBreaker.mu.RUnlock()
 
@@ -607,7 +607,7 @@ func (po *PerformanceOptimizer) getCircuitBreakerStatus() map[string]interface{}
 		stateStr = "half-open"
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"state":        stateStr,
 		"failures":     po.circuitBreaker.failures,
 		"max_failures": po.circuitBreaker.maxFailures,

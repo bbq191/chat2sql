@@ -332,10 +332,10 @@ func (sm *SystemMonitor) IsRunning() bool {
 }
 
 // GetMetrics 获取所有监控指标（用于测试和调试）
-func (sm *SystemMonitor) GetMetrics() map[string]interface{} {
+func (sm *SystemMonitor) GetMetrics() map[string]any {
 	stats := sm.GetCurrentStats()
 	
-	return map[string]interface{}{
+	return map[string]any{
 		"memory_alloc_mb":    stats.MemoryAllocBytes / 1024 / 1024,
 		"memory_sys_mb":      stats.MemorySysBytes / 1024 / 1024,
 		"goroutines_count":   stats.GoroutinesCount,

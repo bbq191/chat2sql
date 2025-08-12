@@ -93,7 +93,7 @@ func SetupMiddleware(r *gin.Engine, config *MiddlewareConfig) {
 // RecoveryMiddleware 恢复中间件
 // 捕获panic并记录详细错误日志，防止服务崩溃
 func RecoveryMiddleware(logger *zap.Logger) gin.HandlerFunc {
-	return gin.CustomRecoveryWithWriter(nil, func(c *gin.Context, recovered interface{}) {
+	return gin.CustomRecoveryWithWriter(nil, func(c *gin.Context, recovered any) {
 		if logger != nil {
 			logger.Error("Request panic recovered",
 				zap.Any("panic", recovered),

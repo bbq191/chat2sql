@@ -187,10 +187,11 @@ func (s *RealBusinessPerformanceTestSuite) setupTestData(t *testing.T) {
 		Port:              5432,
 		DatabaseName:      "chat2sql_test",
 		Username:          "postgres",
-		PasswordEncrypted: "password", // 将被加密
+		PasswordEncrypted: "password", // 明文密码，将通过ConnectionManager加密
 		Status:            string(repository.ConnectionActive),
 	}
-	err = s.repository.ConnectionRepo().Create(ctx, s.testConnection)
+	// 使用ConnectionManager创建连接，确保密码被正确加密
+	err = s.connectionManager.CreateConnection(ctx, s.testConnection)
 	require.NoError(t, err)
 	
 	// 创建测试查询历史
@@ -645,8 +646,12 @@ func (s *RealBusinessPerformanceTestSuite) testRepositoryPerformance(t *testing.
 					
 					// Create操作
 					testUser := &repository.User{
-						Username:     fmt.Sprintf("perf_test_%d_%d", workerID, j),
-						Email:        fmt.Sprintf("perf_test_%d_%d@test.com", workerID, j),
+						BaseModel: repository.BaseModel{
+							CreateBy: &s.testUser.ID,  // 设置创建者指针
+							UpdateBy: &s.testUser.ID,  // 设置更新者指针
+						},
+						Username:     fmt.Sprintf("perf_test_%d_%d_%d", workerID, j, time.Now().UnixNano()),
+						Email:        fmt.Sprintf("perf_test_%d_%d_%d@test.com", workerID, j, time.Now().UnixNano()),
 						PasswordHash: "test_hash",
 						Role:         string(repository.RoleUser),
 						Status:       string(repository.StatusActive),
@@ -657,6 +662,11 @@ func (s *RealBusinessPerformanceTestSuite) testRepositoryPerformance(t *testing.
 					
 					if err == nil {
 						atomic.AddInt64(&createCount, 1)
+					} else {
+						// 记录第一个Create错误
+						if atomic.LoadInt64(&createCount) == 0 {
+							t.Logf("用户Create第一个错误: %v", err)
+						}
 					}
 					
 					// Read操作
@@ -726,6 +736,10 @@ func (s *RealBusinessPerformanceTestSuite) testRepositoryPerformance(t *testing.
 				generatedSQL := fmt.Sprintf("SELECT %d as batch_test", j)
 				sqlHash := fmt.Sprintf("%x", sha256.Sum256([]byte(generatedSQL)))
 				queries[j] = &repository.QueryHistory{
+					BaseModel: repository.BaseModel{
+						CreateBy: &s.testUser.ID,  // 设置创建者指针
+						UpdateBy: &s.testUser.ID,  // 设置更新者指针
+					},
 					UserID:        s.testUser.ID,
 					ConnectionID:  &s.testConnection.ID,
 					NaturalQuery:  fmt.Sprintf("批量测试查询 %d-%d", i, j),
@@ -741,6 +755,11 @@ func (s *RealBusinessPerformanceTestSuite) testRepositoryPerformance(t *testing.
 				err := s.repository.QueryHistoryRepo().Create(ctx, query)
 				if err == nil {
 					atomic.AddInt64(&successCount, 1)
+				} else {
+					// 记录第一个错误以便诊断
+					if atomic.LoadInt64(&successCount) == 0 {
+						t.Logf("批量插入第一个错误: %v", err)
+					}
 				}
 			}
 		}
@@ -1044,13 +1063,18 @@ func (s *RealBusinessPerformanceTestSuite) testTransactionPerformance(t *testing
 					// 开始事务
 					txRepo, err := s.repository.BeginTx(ctx)
 					if err != nil {
+						t.Logf("开始事务失败 worker-%d req-%d: %v", workerID, j, err)
 						continue
 					}
 					
 					// 在事务中执行多个操作
 					testUser := &repository.User{
-						Username:     fmt.Sprintf("tx_test_%d_%d", workerID, j),
-						Email:        fmt.Sprintf("tx_test_%d_%d@test.com", workerID, j),
+						BaseModel: repository.BaseModel{
+							CreateBy: &s.testUser.ID,  // 设置创建者指针
+							UpdateBy: &s.testUser.ID,  // 设置更新者指针
+						},
+						Username:     fmt.Sprintf("tx_test_%d_%d_%d", workerID, j, time.Now().UnixNano()),
+						Email:        fmt.Sprintf("tx_test_%d_%d_%d@test.com", workerID, j, time.Now().UnixNano()),
 						PasswordHash: "tx_test_hash",
 						Role:         string(repository.RoleUser),
 						Status:       string(repository.StatusActive),
@@ -1058,6 +1082,7 @@ func (s *RealBusinessPerformanceTestSuite) testTransactionPerformance(t *testing
 					
 					err = txRepo.UserRepo().Create(ctx, testUser)
 					if err != nil {
+						t.Logf("创建用户失败 worker-%d req-%d: %v", workerID, j, err)
 						txRepo.Rollback()
 						continue
 					}
@@ -1067,6 +1092,10 @@ func (s *RealBusinessPerformanceTestSuite) testTransactionPerformance(t *testing
 					generatedSQL := "SELECT 1"
 					sqlHash := fmt.Sprintf("%x", sha256.Sum256([]byte(generatedSQL)))
 					queryHistory := &repository.QueryHistory{
+						BaseModel: repository.BaseModel{
+							CreateBy: &s.testUser.ID,  // 设置创建者指针
+							UpdateBy: &s.testUser.ID,  // 设置更新者指针
+						},
 						UserID:        testUser.ID,
 						ConnectionID:  &s.testConnection.ID,
 						NaturalQuery:  fmt.Sprintf("事务测试查询 %d-%d", workerID, j),
@@ -1078,6 +1107,7 @@ func (s *RealBusinessPerformanceTestSuite) testTransactionPerformance(t *testing
 					
 					err = txRepo.QueryHistoryRepo().Create(ctx, queryHistory)
 					if err != nil {
+						t.Logf("创建查询历史失败 worker-%d req-%d: %v", workerID, j, err)
 						txRepo.Rollback()
 						continue
 					}
@@ -1090,6 +1120,11 @@ func (s *RealBusinessPerformanceTestSuite) testTransactionPerformance(t *testing
 					totalLatency += reqLatency
 					if err == nil {
 						atomic.AddInt64(&successCount, 1)
+					} else {
+						// 记录第一个事务提交错误
+						if atomic.LoadInt64(&successCount) == 0 {
+							t.Logf("事务提交第一个错误: %v", err)
+						}
 					}
 					mutex.Unlock()
 				}

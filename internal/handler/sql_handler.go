@@ -10,9 +10,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-	
-	"chat2sql-go/internal/repository"
+
 	"chat2sql-go/internal/middleware"
+	"chat2sql-go/internal/repository"
 	"chat2sql-go/internal/service"
 )
 

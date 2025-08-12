@@ -54,7 +54,7 @@ func TestAuthHandler_ErrorHandling(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		var response map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &response)
-		assert.Contains(t, response["error"], "检查用户名失败")
+		assert.Contains(t, response["message"], "数据库查询失败")
 
 		mockUserRepo.AssertExpectations(t)
 	})
@@ -79,7 +79,7 @@ func TestAuthHandler_ErrorHandling(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		var response map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &response)
-		assert.Contains(t, response["error"], "无效的请求格式")
+		assert.Contains(t, response["message"], "请求参数格式错误")
 	})
 
 	t.Run("Login_UserNotFound", func(t *testing.T) {
@@ -111,7 +111,7 @@ func TestAuthHandler_ErrorHandling(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 		var response map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &response)
-		assert.Contains(t, response["error"], "用户名或密码错误")
+		assert.Contains(t, response["message"], "用户名或密码错误")
 
 		mockUserRepo.AssertExpectations(t)
 	})

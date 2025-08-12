@@ -7,7 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-	
+
 	"chat2sql-go/internal/auth"
 	"chat2sql-go/internal/repository"
 )

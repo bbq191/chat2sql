@@ -592,8 +592,6 @@ func TestEdgeCases(t *testing.T) {
 
 		mockSchemaRepo.On("GetTableStructure", mock.Anything, int64(1), "public", "users").
 			Return(metadata, nil)
-		mockSchemaRepo.On("GetRelatedTables", mock.Anything, int64(1), "users").
-			Return([]*repository.TableRelation{}, nil)
 
 		ctx := context.Background()
 		

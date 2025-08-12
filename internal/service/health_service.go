@@ -15,7 +15,7 @@ import (
 type HealthServiceInterface interface {
 	CheckHealth(ctx context.Context) *HealthCheckResult
 	CheckReadiness(ctx context.Context) *ReadinessResult
-	GetVersionInfo() map[string]interface{}
+	GetVersionInfo() map[string]any
 }
 
 // HealthService 健康检查服务
@@ -66,7 +66,7 @@ type HealthCheckResult struct {
 	Version     string                      `json:"version"`
 	Environment string                      `json:"environment"`
 	Components  map[string]ComponentStatus  `json:"components"`
-	BuildInfo   map[string]interface{}      `json:"build_info,omitempty"`
+	BuildInfo   map[string]any      `json:"build_info,omitempty"`
 }
 
 // ReadinessResult 就绪检查结果
@@ -226,6 +226,6 @@ func (h *HealthService) checkRedis(ctx context.Context) ComponentStatus {
 }
 
 // GetVersionInfo 获取版本信息
-func (h *HealthService) GetVersionInfo() map[string]interface{} {
+func (h *HealthService) GetVersionInfo() map[string]any {
 	return h.appInfo.GetBuildInfo()
 }

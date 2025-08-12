@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"chat2sql-go/internal/repository"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+
+	"chat2sql-go/internal/repository"
 )
 
 // PostgreSQLQueryHistoryRepository PostgreSQL查询历史Repository实现

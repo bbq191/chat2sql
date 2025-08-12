@@ -1,11 +1,13 @@
 package handler
 
 import (
-	"chat2sql-go/internal/service"
-	"github.com/gin-gonic/gin"
-	"github.com/gin-gonic/gin/binding"
 	"net/http"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
+
+	"chat2sql-go/internal/service"
 )
 
 // RouterConfig 路由配置结构
@@ -14,6 +16,7 @@ type RouterConfig struct {
 	UserHandler       *UserHandler
 	SQLHandler        *SQLHandler
 	ConnectionHandler *ConnectionHandler
+	AIHandler         *AIHandler          // P1阶段新增: AI服务处理器
 	AuthMiddleware    AuthMiddleware       // JWT认证中间件接口
 	HealthService     service.HealthServiceInterface // 健康检查服务接口
 }
@@ -98,6 +101,16 @@ func setupProtectedRoutes(rg *gin.RouterGroup, config *RouterConfig) {
 			connections.DELETE("/:id", config.ConnectionHandler.DeleteConnection)   // 删除连接
 			connections.POST("/:id/test", config.ConnectionHandler.TestConnection)  // 测试连接
 			connections.GET("/:id/schema", config.ConnectionHandler.GetSchema)      // 获取数据库结构
+		}
+		
+		// P1阶段新增：AI智能查询API
+		if config.AIHandler != nil {
+			ai := protected.Group("/ai")
+			{
+				ai.POST("/chat2sql", config.AIHandler.Chat2SQL)           // 自然语言转SQL
+				ai.POST("/feedback", config.AIHandler.SubmitFeedback)     // 提交用户反馈
+				ai.GET("/stats", config.AIHandler.GetAIStats)             // 获取AI服务统计
+			}
 		}
 	}
 }

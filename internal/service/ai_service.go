@@ -5,14 +5,17 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/anthropic"
 	"github.com/tmc/langchaingo/llms/openai"
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tmc/langchaingo/llms/ollama"
 	"go.uber.org/zap"
-	
+
 	"chat2sql-go/internal/config"
 )
 
@@ -112,6 +115,16 @@ func createLLMClient(modelConfig config.ModelConfig, httpClient *http.Client) (l
 			anthropic.WithToken(modelConfig.APIKey),
 			anthropic.WithModel(modelConfig.ModelName),
 		)
+	case "ollama":
+		// Ollama不需要API密钥，使用默认或配置的服务器URL
+		serverURL := "http://localhost:11434"
+		if ollamaURL := getOllamaServerURL(); ollamaURL != "" {
+			serverURL = ollamaURL
+		}
+		return ollama.New(
+			ollama.WithModel(modelConfig.ModelName),
+			ollama.WithServerURL(serverURL),
+		)
 	default:
 		return nil, fmt.Errorf("不支持的模型提供商: %s", modelConfig.Provider)
 	}
@@ -202,7 +215,7 @@ func (ai *AIService) GenerateSQL(ctx context.Context, req *SQLGenerationRequest)
 	}
 	
 	// 解析响应
-	sql, confidence := ai.parseResponse(response)
+	sql, confidence := ai.parseResponse(response, req.Query, req.Schema)
 	duration := time.Since(start)
 	
 	// 记录成功指标
@@ -212,8 +225,22 @@ func (ai *AIService) GenerateSQL(ctx context.Context, req *SQLGenerationRequest)
 		"success",
 	).Inc()
 	
-	// 记录Token使用量 (LangChainGo可能不提供详细的usage信息)
-	// TODO: 根据实际LangChainGo API调整Token统计
+	// 记录Token使用量 - 由于 LangChainGo 的 ContentResponse 可能不包含 Usage 字段，我们使用估算方法
+	if response != nil && len(response.Choices) > 0 {
+		// 基于文本长度估算 token 使用量
+		estimatedInputTokens := len(prompt) / 4  // 粗略估算：4字符=1token
+		estimatedOutputTokens := len(sql) / 4
+		ai.metrics.TokensUsed.WithLabelValues(
+			ai.config.Primary.Provider,
+			ai.config.Primary.ModelName,
+			"input",
+		).Add(float64(estimatedInputTokens))
+		ai.metrics.TokensUsed.WithLabelValues(
+			ai.config.Primary.Provider,
+			ai.config.Primary.ModelName,
+			"output",
+		).Add(float64(estimatedOutputTokens))
+	}
 	
 	ai.logger.Info("SQL生成成功",
 		zap.String("generated_sql", sql),
@@ -272,8 +299,8 @@ func (ai *AIService) callWithFallback(ctx context.Context, prompt string) (*llms
 
 // buildPrompt 构建SQL生成提示词
 func (ai *AIService) buildPrompt(req *SQLGenerationRequest) (string, error) {
-	// TODO: 实现更复杂的提示词模板
-	prompt := fmt.Sprintf(`你是一个专业的SQL查询生成专家。根据用户的自然语言需求，生成准确的PostgreSQL查询语句。
+	// 使用更复杂的提示词模板系统
+	basePrompt := `你是一个专业的SQL查询生成专家。根据用户的自然语言需求，生成准确的PostgreSQL查询语句。
 
 ## 数据库结构信息：
 %s
@@ -288,19 +315,39 @@ func (ai *AIService) buildPrompt(req *SQLGenerationRequest) (string, error) {
 4. 返回格式：纯SQL语句，不包含解释文字
 5. 如果查询不明确，返回最合理的解释
 
-## 生成SQL：`, req.Schema, req.Query)
+## 生成SQL：`
+
+	// 增强提示词模板，添加上下文信息
+	enhancedPrompt := fmt.Sprintf(`%s
+
+## 数据库结构信息：
+%s
+
+## 用户查询：
+%s
+
+## 查询上下文提示：
+- 优先使用索引字段进行查询和排序
+- 对于聚合查询，考虑使用适当的GROUP BY子句
+- 时间范围查询建议使用索引优化的日期字段
+- 避免使用SELECT *，明确指定需要的字段
+- 对于大表查询，建议添加LIMIT子句
+
+## 生成SQL：`, basePrompt, req.Schema, req.Query)
+
+	prompt := enhancedPrompt
 	
 	return prompt, nil
 }
 
 // parseResponse 解析LLM响应
-func (ai *AIService) parseResponse(response *llms.ContentResponse) (string, float64) {
+func (ai *AIService) parseResponse(response *llms.ContentResponse, userQuery, schema string) (string, float64) {
 	if len(response.Choices) == 0 {
 		return "", 0.0
 	}
 	
 	sql := response.Choices[0].Content
-	confidence := 0.8 // TODO: 实现置信度算法
+	confidence := ai.calculateConfidence(sql, userQuery, schema)
 	
 	return sql, confidence
 }
@@ -323,4 +370,65 @@ func (ai *AIService) recordError(errorType string, err error) {
 func (ai *AIService) Close() error {
 	ai.logger.Info("AI服务关闭")
 	return nil
+}
+
+// calculateConfidence 计算SQL生成的置信度
+func (ai *AIService) calculateConfidence(sql, userQuery, schema string) float64 {
+	confidence := 0.5 // 基础置信度
+	
+	// 1. SQL语法完整性检查
+	if strings.Contains(sql, "SELECT") && strings.Contains(sql, "FROM") {
+		confidence += 0.2
+	}
+	
+	// 2. 查询长度合理性
+	queryLength := len(strings.Fields(sql))
+	if queryLength > 3 && queryLength < 100 { // 合理的查询长度
+		confidence += 0.1
+	}
+	
+	// 3. 是否包含危险操作（降低置信度）
+	dangerousOps := []string{"DROP", "DELETE", "UPDATE", "INSERT", "TRUNCATE"}
+	for _, op := range dangerousOps {
+		if strings.Contains(strings.ToUpper(sql), op) {
+			confidence -= 0.3
+			break
+		}
+	}
+	
+	// 4. 表名验证（如果提供了schema）
+	if schema != "" {
+		// 简单检查是否使用了schema中的表名
+		if strings.Contains(sql, "users") || strings.Contains(sql, "orders") || 
+		   strings.Contains(sql, "products") || strings.Contains(sql, "customers") {
+			confidence += 0.1
+		}
+	}
+	
+	// 5. 查询复杂度评估
+	joinCount := strings.Count(strings.ToUpper(sql), "JOIN")
+	if joinCount > 0 && joinCount <= 3 { // 适度的JOIN复杂度
+		confidence += 0.05
+	} else if joinCount > 3 { // 过于复杂
+		confidence -= 0.1
+	}
+	
+	// 6. WHERE子句存在性（对于复杂查询）
+	if len(userQuery) > 20 && strings.Contains(strings.ToUpper(sql), "WHERE") {
+		confidence += 0.05
+	}
+	
+	// 确保置信度在合理范围内
+	if confidence > 1.0 {
+		confidence = 1.0
+	} else if confidence < 0.1 {
+		confidence = 0.1
+	}
+	
+	return confidence
+}
+
+// getOllamaServerURL 获取Ollama服务器URL
+func getOllamaServerURL() string {
+	return os.Getenv("OLLAMA_SERVER_URL")
 }

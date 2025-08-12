@@ -29,9 +29,9 @@ func NewPgxZapLogger(logger *zap.Logger, level string) *PgxZapLogger {
 }
 
 // Log 实现tracelog.Logger接口
-func (l *PgxZapLogger) Log(ctx context.Context, level tracelog.LogLevel, msg string, data map[string]interface{}) {
-	// 检查日志级别
-	if level < l.level {
+func (l *PgxZapLogger) Log(ctx context.Context, level tracelog.LogLevel, msg string, data map[string]any) {
+	// 检查日志级别 - tracelog级别数值递减，只记录level <= l.level的日志
+	if level > l.level {
 		return
 	}
 

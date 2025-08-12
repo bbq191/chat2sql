@@ -396,8 +396,10 @@ func TestPgxZapLogger_Log_DefaultLevel(t *testing.T) {
 	pgxLogger := NewPgxZapLogger(logger, "trace")
 	ctx := context.Background()
 
-	// 使用一个不在已知级别中的值（通过类型转换）
-	unknownLevel := tracelog.LogLevel(999)
+	// 使用一个不在已知级别中但不会被级别检查过滤的值
+	// tracelog级别：Error=1, Warn=2, Info=3, Debug=4, Trace=5
+	// 使用0作为未知级别，它会通过级别检查（0 <= 5）
+	unknownLevel := tracelog.LogLevel(0)
 	
 	pgxLogger.Log(ctx, unknownLevel, "unknown level test", map[string]interface{}{})
 

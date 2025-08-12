@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"chat2sql-go/internal/config"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+
+	"chat2sql-go/internal/config"
 )
 
 // Manager PostgreSQL数据库连接管理器

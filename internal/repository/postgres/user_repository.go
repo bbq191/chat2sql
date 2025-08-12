@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"time"
 
-	"chat2sql-go/internal/repository"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+
+	"chat2sql-go/internal/repository"
 )
 
 // PostgreSQLUserRepository PostgreSQL用户Repository实现
@@ -421,7 +422,7 @@ func (r *PostgreSQLUserRepository) ValidateCredentials(ctx context.Context, user
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			r.logger.Warn("用户凭据验证失败", zap.String("username", username))
-			return nil, fmt.Errorf("用户名或密码错误: %w", repository.ErrInvalidCredentials)
+			return nil, repository.ErrInvalidCredentials
 		}
 		
 		r.logger.Error("验证用户凭据失败",

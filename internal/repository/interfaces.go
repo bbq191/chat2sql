@@ -12,6 +12,7 @@ type Repository interface {
 	QueryHistoryRepo() QueryHistoryRepository
 	ConnectionRepo() ConnectionRepository
 	SchemaRepo() SchemaRepository
+	FeedbackRepo() FeedbackRepository
 	
 	// 事务管理
 	BeginTx(ctx context.Context) (TxRepository, error)
@@ -26,6 +27,7 @@ type TxRepository interface {
 	QueryHistoryRepo() QueryHistoryRepository
 	ConnectionRepo() ConnectionRepository
 	SchemaRepo() SchemaRepository
+	FeedbackRepo() FeedbackRepository
 	
 	Commit() error
 	Rollback() error
@@ -228,4 +230,100 @@ func (p *PaginationParams) Validate() error {
 // GetPage 计算页码（从1开始）
 func (p *PaginationParams) GetPage() int {
 	return (p.Offset / p.Limit) + 1
+}
+
+// FeedbackRepository 用户反馈Repository接口
+// 提供用户反馈的管理，支持统计分析和准确率监控
+type FeedbackRepository interface {
+	// 基础CRUD操作
+	Create(ctx context.Context, feedback *Feedback) error
+	GetByID(ctx context.Context, id int64) (*Feedback, error)
+	GetByQueryID(ctx context.Context, queryID string) (*Feedback, error)
+	Update(ctx context.Context, feedback *Feedback) error
+	Delete(ctx context.Context, id int64) error // 软删除
+	
+	// 查询操作
+	ListByUser(ctx context.Context, userID int64, limit, offset int) ([]*Feedback, error)
+	ListByTimeRange(ctx context.Context, startTime, endTime time.Time, limit, offset int) ([]*Feedback, error)
+	ListByCorrectness(ctx context.Context, isCorrect bool, limit, offset int) ([]*Feedback, error)
+	ListByRating(ctx context.Context, minRating int, limit, offset int) ([]*Feedback, error)
+	ListByCategory(ctx context.Context, category string, limit, offset int) ([]*Feedback, error)
+	ListByModel(ctx context.Context, model string, limit, offset int) ([]*Feedback, error)
+	
+	// 统计操作
+	CountByUser(ctx context.Context, userID int64) (int64, error)
+	CountByCorrectness(ctx context.Context, isCorrect bool) (int64, error)
+	CountByTimeRange(ctx context.Context, startTime, endTime time.Time) (int64, error)
+	GetAccuracyStats(ctx context.Context, startTime, endTime time.Time) (*AccuracyStats, error)
+	GetRatingStats(ctx context.Context, startTime, endTime time.Time) (*RatingStats, error)
+	GetCategoryStats(ctx context.Context, startTime, endTime time.Time) ([]*CategoryFeedbackStats, error)
+	GetModelStats(ctx context.Context, startTime, endTime time.Time) ([]*ModelFeedbackStats, error)
+	GetUserStats(ctx context.Context, limit int) ([]*UserFeedbackStats, error)
+	GetErrorStats(ctx context.Context, startTime, endTime time.Time, limit int) ([]*ErrorStats, error)
+	
+	// 搜索操作
+	SearchByQuery(ctx context.Context, keyword string, limit, offset int) ([]*Feedback, error)
+	SearchByFeedback(ctx context.Context, keyword string, limit, offset int) ([]*Feedback, error)
+	
+	// 批量操作
+	BatchCreate(ctx context.Context, feedbacks []*Feedback) error
+	BatchUpdateProcessed(ctx context.Context, feedbackIDs []int64) error
+	CleanupOldFeedbacks(ctx context.Context, beforeDate time.Time) (int64, error)
+}
+
+// 反馈统计相关的数据结构
+
+// AccuracyStats 准确率统计
+type AccuracyStats struct {
+	TotalQueries    int64   `json:"total_queries"`    // 总查询数
+	CorrectQueries  int64   `json:"correct_queries"`  // 正确查询数
+	AccuracyRate    float64 `json:"accuracy_rate"`    // 准确率
+	ErrorRate       float64 `json:"error_rate"`       // 错误率
+	ImprovementRate float64 `json:"improvement_rate"` // 相比上期改进率
+}
+
+// RatingStats 评分统计
+type RatingStats struct {
+	TotalRatings int64            `json:"total_ratings"`  // 总评分数
+	AverageRating float64         `json:"average_rating"` // 平均评分
+	RatingDistribution map[int]int64 `json:"rating_distribution"` // 评分分布 {评分: 数量}
+}
+
+// CategoryFeedbackStats 类别反馈统计
+type CategoryFeedbackStats struct {
+	Category       string  `json:"category"`        // 查询类别
+	TotalQueries   int64   `json:"total_queries"`   // 总查询数
+	CorrectQueries int64   `json:"correct_queries"` // 正确查询数
+	AccuracyRate   float64 `json:"accuracy_rate"`   // 准确率
+	AverageRating  float64 `json:"average_rating"`  // 平均评分
+}
+
+// ModelFeedbackStats 模型反馈统计
+type ModelFeedbackStats struct {
+	ModelName      string  `json:"model_name"`      // 模型名称
+	TotalQueries   int64   `json:"total_queries"`   // 总查询数
+	CorrectQueries int64   `json:"correct_queries"` // 正确查询数
+	AccuracyRate   float64 `json:"accuracy_rate"`   // 准确率
+	AverageRating  float64 `json:"average_rating"`  // 平均评分
+	AvgTokensUsed  float64 `json:"avg_tokens_used"` // 平均Token使用数
+	AvgProcessTime float64 `json:"avg_process_time"` // 平均处理时间（毫秒）
+}
+
+// UserFeedbackStats 用户反馈统计
+type UserFeedbackStats struct {
+	UserID         int64   `json:"user_id"`         // 用户ID
+	TotalQueries   int64   `json:"total_queries"`   // 总查询数
+	CorrectQueries int64   `json:"correct_queries"` // 正确查询数
+	AccuracyRate   float64 `json:"accuracy_rate"`   // 准确率
+	AverageRating  float64 `json:"average_rating"`  // 平均评分
+	FeedbackCount  int64   `json:"feedback_count"`  // 反馈数量
+	LastFeedback   *time.Time `json:"last_feedback"` // 最后反馈时间
+}
+
+// ErrorStats 错误统计
+type ErrorStats struct {
+	ErrorType    string `json:"error_type"`    // 错误类型
+	ErrorCount   int64  `json:"error_count"`   // 错误次数
+	ExampleQuery string `json:"example_query"` // 示例查询
+	ExampleError string `json:"example_error"` // 示例错误信息
 }

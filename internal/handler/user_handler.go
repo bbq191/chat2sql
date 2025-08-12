@@ -7,9 +7,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-	
-	"chat2sql-go/internal/repository"
+
 	"chat2sql-go/internal/middleware"
+	"chat2sql-go/internal/repository"
 )
 
 // UserHandler 用户管理处理器

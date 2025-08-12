@@ -188,6 +188,37 @@ func (dc *DatabaseConnection) IsConnectionHealthy() bool {
 	return dc.Status == string(ConnectionActive) && !dc.IsDeleted
 }
 
+// Feedback 用户反馈模型
+// 记录用户对AI生成SQL的反馈和评价，用于模型改进和准确率监控
+type Feedback struct {
+	BaseModel
+	QueryID        string  `json:"query_id" db:"query_id"`               // 查询ID，关联到具体的查询请求
+	UserID         int64   `json:"user_id" db:"user_id"`                 // 反馈用户ID，外键关联users表
+	UserQuery      string  `json:"user_query" db:"user_query"`           // 原始自然语言查询
+	GeneratedSQL   string  `json:"generated_sql" db:"generated_sql"`     // AI生成的SQL语句
+	ExpectedSQL    *string `json:"expected_sql" db:"expected_sql"`       // 用户期望的SQL语句（可选）
+	IsCorrect      bool    `json:"is_correct" db:"is_correct"`           // SQL是否正确
+	UserRating     int     `json:"user_rating" db:"user_rating"`         // 用户评分 1-5分
+	FeedbackText   *string `json:"feedback_text" db:"feedback_text"`     // 用户文本反馈（可选）
+	Category       string  `json:"category" db:"category"`               // 查询类别
+	Difficulty     string  `json:"difficulty" db:"difficulty"`           // 查询难度
+	ErrorType      *string `json:"error_type" db:"error_type"`           // 错误类型（如果有）
+	ErrorDetails   *string `json:"error_details" db:"error_details"`     // 错误详情（如果有）
+	ProcessingTime int64   `json:"processing_time" db:"processing_time"` // 处理时间（毫秒）
+	TokensUsed     int     `json:"tokens_used" db:"tokens_used"`         // 使用的Token数量
+	ModelUsed      string  `json:"model_used" db:"model_used"`           // 使用的AI模型
+	ConnectionID   *int64  `json:"connection_id" db:"connection_id"`     // 使用的数据库连接ID（可选）
+}
+
+// FeedbackStatus 反馈状态枚举
+type FeedbackStatus string
+
+const (
+	FeedbackPending   FeedbackStatus = "pending"   // 待处理
+	FeedbackProcessed FeedbackStatus = "processed" // 已处理
+	FeedbackIgnored   FeedbackStatus = "ignored"   // 已忽略
+)
+
 // GetTableKey 获取表的唯一标识符
 // 格式：schema_name.table_name
 func (sm *SchemaMetadata) GetTableKey() string {
@@ -195,4 +226,47 @@ func (sm *SchemaMetadata) GetTableKey() string {
 		return sm.SchemaName + "." + sm.TableName
 	}
 	return sm.TableName
+}
+
+// IsValidRating 验证用户评分是否有效（1-5分）
+func (f *Feedback) IsValidRating() bool {
+	return f.UserRating >= 1 && f.UserRating <= 5
+}
+
+// IsPositiveFeedback 判断是否为正面反馈
+func (f *Feedback) IsPositiveFeedback() bool {
+	return f.IsCorrect && f.UserRating >= 4
+}
+
+// GetCategoryEnum 获取查询类别枚举
+func (f *Feedback) GetCategoryEnum() string {
+	validCategories := map[string]bool{
+		"basic_select":    true,
+		"join_query":      true,
+		"aggregation":     true,
+		"subquery":        true,
+		"time_analysis":   true,
+		"complex_query":   true,
+	}
+	
+	if validCategories[f.Category] {
+		return f.Category
+	}
+	return "basic_select" // 默认类别
+}
+
+// GetDifficultyLevel 获取难度级别数值
+func (f *Feedback) GetDifficultyLevel() int {
+	switch f.Difficulty {
+	case "easy":
+		return 1
+	case "medium":
+		return 2
+	case "hard":
+		return 3
+	case "expert":
+		return 4
+	default:
+		return 1 // 默认简单
+	}
 }

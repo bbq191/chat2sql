@@ -42,8 +42,8 @@ func (suite *PostgreSQLRepositoryTestSuite) SetupSuite() {
 		Password:        "",  // 本地环境通常无密码或使用默认配置
 		Database:        "chat2sql_test",
 		SSLMode:         "disable",  // 本地环境禁用SSL
-		MaxConns:        10,
-		MinConns:        2,
+		MaxConns:        50,  // 增加连接数以支持并发测试
+		MinConns:        5,   // 增加最小连接数
 		MaxConnLifetime: time.Hour,
 		MaxConnIdleTime: 30 * time.Minute,
 		HealthCheckPeriod: 5 * time.Minute,  // 健康检查周期

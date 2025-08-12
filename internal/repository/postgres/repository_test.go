@@ -393,7 +393,7 @@ func testPerformanceBenchmarks(t *testing.T, repo repository.Repository) {
 	
 	// 并发连接测试
 	t.Run("并发连接测试", func(t *testing.T) {
-		const concurrency = 100
+		const concurrency = 20  // 降低并发数以适配连接池限制
 		const iterations = 10
 		
 		start := time.Now()

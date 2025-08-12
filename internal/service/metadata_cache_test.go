@@ -828,7 +828,14 @@ func TestConcurrentAccess(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	mockSchemaRepo := &MockSchemaRepository{}
 
-	cache := NewMetadataCache(mockSchemaRepo, logger)
+	// 为并发测试禁用预取功能，避免复杂的mock期望
+	config := &MetadataCacheConfig{
+		DefaultTTL:        30 * time.Minute,
+		CleanupInterval:   time.Hour,
+		EnablePrefetch:    false, // 禁用预取
+		PrefetchThreshold: 5,
+	}
+	cache := NewMetadataCacheWithConfig(mockSchemaRepo, config, logger)
 
 	// 设置mock期望以支持并发访问
 	metadata := []*repository.SchemaMetadata{
@@ -842,10 +849,6 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 	mockSchemaRepo.On("GetTableStructure", mock.Anything, int64(1), "public", "test_table").
 		Return(metadata, nil)
-	
-	// 添加GetRelatedTables的mock期望，用于预取相关表
-	mockSchemaRepo.On("GetRelatedTables", mock.Anything, int64(1), "test_table").
-		Return([]*repository.TableRelation{}, nil)
 
 	var wg sync.WaitGroup
 	errorsChan := make(chan error, 10)

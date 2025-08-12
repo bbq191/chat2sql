@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"chat2sql-go/internal/repository"
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
+
+	"chat2sql-go/internal/repository"
 )
 
 // PostgreSQLTxSchemaRepository PostgreSQL事务版元数据Repository实现

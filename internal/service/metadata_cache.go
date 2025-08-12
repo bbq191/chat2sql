@@ -324,6 +324,9 @@ func (mc *MetadataCache) GetTableSummary(ctx context.Context, connectionID int64
 	// 转换为缓存格式
 	var cachedColumns []CachedColumn
 	for _, metadata := range schemaMetadataList {
+		if metadata == nil {
+			continue // 跳过nil条目
+		}
 		column := CachedColumn{
 			ColumnName:    metadata.ColumnName,
 			DataType:      metadata.DataType,

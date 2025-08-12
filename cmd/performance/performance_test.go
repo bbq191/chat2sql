@@ -301,11 +301,11 @@ func TestCalculatePercentiles(t *testing.T) {
 	tester.calculatePercentiles(result)
 	
 	// 排序后: [25, 50, 75, 100, 125, 150, 175, 200, 250, 300]
-	// P50 (50%): 125ms (index 5)
-	// P90 (90%): 250ms (index 9)
+	// P50 (50%): 150ms (index 5)
+	// P90 (90%): 300ms (index 9)
 	// P99 (99%): 300ms (index 9, because 99% of 10 is 9.9, rounded down to 9)
-	assert.Equal(t, 125*time.Millisecond, result.P50Latency)
-	assert.Equal(t, 250*time.Millisecond, result.P90Latency)
+	assert.Equal(t, 150*time.Millisecond, result.P50Latency)
+	assert.Equal(t, 300*time.Millisecond, result.P90Latency)
 	assert.Equal(t, 300*time.Millisecond, result.P99Latency)
 }
 

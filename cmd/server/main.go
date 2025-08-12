@@ -35,11 +35,19 @@ func main() {
 		zap.String("version", "0.1.0"),
 		zap.String("go_version", runtime.Version()))
 
+	// 加载环境变量
+	if err := config.LoadEnv(".env"); err != nil {
+		logger.Warn("Failed to load .env file", zap.Error(err))
+	}
+
 	// 初始化配置
 	dbConfig := config.DefaultDatabaseConfig()
 	redisConfig := config.DefaultRedisConfig()
 	jwtConfig := auth.DefaultJWTConfig()
 	metricsConfig := metrics.DefaultMetricsConfig()
+	
+	// 创建支持本地Ollama的AI配置
+	aiConfig := createLocalAIConfig()
 	
 	// 初始化数据库连接
 	dbManager, err := database.NewManager(dbConfig, logger)
@@ -100,11 +108,18 @@ func main() {
 	appInfo := config.DefaultAppInfo()
 	healthService := service.NewHealthService(repo, redisClient, appInfo, logger)
 
+	// 初始化AI服务
+	aiService, err := service.NewAIService(aiConfig, logger)
+	if err != nil {
+		logger.Fatal("Failed to initialize AI service", zap.Error(err))
+	}
+
 	// 初始化处理器
 	authHandler := handler.NewAuthHandler(repo.UserRepo(), jwtService, logger)
 	userHandler := handler.NewUserHandler(repo.UserRepo(), repo.QueryHistoryRepo(), repo.ConnectionRepo(), logger)
 	sqlHandler := handler.NewSQLHandler(repo.QueryHistoryRepo(), repo.ConnectionRepo(), sqlExecutor, logger)
 	connectionHandler := handler.NewConnectionHandler(repo.ConnectionRepo(), repo.SchemaRepo(), connectionManager, logger)
+	aiHandler := handler.NewAIHandler(aiService, logger)
 
 	// 初始化中间件
 	authMiddleware := middleware.NewAuthMiddleware(jwtService, logger)
@@ -129,6 +144,7 @@ func main() {
 		UserHandler:       userHandler,
 		SQLHandler:        sqlHandler,
 		ConnectionHandler: connectionHandler,
+		AIHandler:         aiHandler,
 		AuthMiddleware:    authMiddleware,
 		HealthService:     healthService,
 	}
@@ -200,6 +216,13 @@ func main() {
 		logger.Info("SystemMonitor停止成功")
 	}
 	
+	// 关闭AI服务
+	if err := aiService.Close(); err != nil {
+		logger.Warn("Failed to close AI service", zap.Error(err))
+	} else {
+		logger.Info("AI service closed")
+	}
+
 	// 关闭数据库连接
 	dbManager.Close()
 	logger.Info("Database connections closed")
@@ -236,5 +259,40 @@ func collectSystemMetrics(pm *metrics.PrometheusMetrics, logger *zap.Logger) {
 		logger.Debug("System metrics updated",
 			zap.Uint64("memory_alloc", m.Alloc),
 			zap.Int("goroutines", runtime.NumGoroutine()))
+	}
+}
+
+// createLocalAIConfig 创建支持本地Ollama的AI配置
+func createLocalAIConfig() *config.AIConfig {
+	// 获取环境变量中的模型名称，默认使用deepseek-r1:7b
+	ollamaModel := os.Getenv("OLLAMA_MODEL")
+	if ollamaModel == "" {
+		ollamaModel = "deepseek-r1:7b"
+	}
+
+	return &config.AIConfig{
+		Primary: config.ModelConfig{
+			Provider:    "ollama",
+			ModelName:   ollamaModel,
+			Temperature: 0.1,
+			MaxTokens:   2048,
+			TopP:        0.9,
+			Timeout:     30 * time.Second,
+		},
+		Fallback: config.ModelConfig{
+			Provider:    "ollama", // 备用也使用Ollama
+			ModelName:   ollamaModel,
+			Temperature: 0.0,
+			MaxTokens:   1024,
+			TopP:        0.9,
+			Timeout:     30 * time.Second,
+		},
+		MaxConcurrency: 10,
+		Timeout:        30 * time.Second,
+		Budget: config.BudgetConfig{
+			DailyLimit:     100.0, // $100 per day (对本地模型不适用，但保持结构)
+			UserLimit:      10.0,  // $10 per user per day
+			AlertThreshold: 0.8,   // 80% of limit
+		},
 	}
 }

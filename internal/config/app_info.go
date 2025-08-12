@@ -49,8 +49,8 @@ func (a *AppInfo) GetVersion() string {
 }
 
 // GetBuildInfo 获取构建信息
-func (a *AppInfo) GetBuildInfo() map[string]interface{} {
-	return map[string]interface{}{
+func (a *AppInfo) GetBuildInfo() map[string]any {
+	return map[string]any{
 		"name":        a.Name,
 		"version":     a.Version,
 		"build_time":  a.BuildTime,

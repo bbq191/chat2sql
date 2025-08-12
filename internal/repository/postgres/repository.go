@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"chat2sql-go/internal/repository"
-
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+
+	"chat2sql-go/internal/repository"
 )
 
 // PostgreSQLRepository PostgreSQL Repository实现
@@ -22,6 +22,7 @@ type PostgreSQLRepository struct {
 	queryHistoryRepo repository.QueryHistoryRepository
 	connectionRepo   repository.ConnectionRepository
 	schemaRepo       repository.SchemaRepository
+	feedbackRepo     repository.FeedbackRepository
 }
 
 // NewPostgreSQLRepository 创建PostgreSQL Repository实例
@@ -39,6 +40,7 @@ func NewPostgreSQLRepository(pool *pgxpool.Pool, logger *zap.Logger) repository.
 		queryHistoryRepo: NewPostgreSQLQueryHistoryRepository(pool, logger),
 		connectionRepo:   NewPostgreSQLConnectionRepository(pool, logger),
 		schemaRepo:       NewPostgreSQLSchemaRepository(pool, logger),
+		feedbackRepo:     NewPostgreSQLFeedbackRepository(pool, logger),
 	}
 }
 
@@ -62,6 +64,11 @@ func (r *PostgreSQLRepository) SchemaRepo() repository.SchemaRepository {
 	return r.schemaRepo
 }
 
+// FeedbackRepo 获取反馈Repository
+func (r *PostgreSQLRepository) FeedbackRepo() repository.FeedbackRepository {
+	return r.feedbackRepo
+}
+
 // BeginTx 开始事务，返回事务Repository
 func (r *PostgreSQLRepository) BeginTx(ctx context.Context) (repository.TxRepository, error) {
 	tx, err := r.pool.Begin(ctx)
@@ -81,6 +88,7 @@ func (r *PostgreSQLRepository) BeginTx(ctx context.Context) (repository.TxReposi
 		queryHistoryRepo: NewPostgreSQLTxQueryHistoryRepository(tx, r.logger),
 		connectionRepo:   NewPostgreSQLTxConnectionRepository(tx, r.logger),
 		schemaRepo:       NewPostgreSQLTxSchemaRepository(tx, r.logger),
+		feedbackRepo:     NewPostgreSQLTxFeedbackRepository(tx, r.logger),
 	}, nil
 }
 
@@ -121,6 +129,7 @@ type PostgreSQLTxRepository struct {
 	queryHistoryRepo repository.QueryHistoryRepository
 	connectionRepo   repository.ConnectionRepository
 	schemaRepo       repository.SchemaRepository
+	feedbackRepo     repository.FeedbackRepository
 }
 
 // UserRepo 获取用户Repository（事务版本）
@@ -141,6 +150,11 @@ func (r *PostgreSQLTxRepository) ConnectionRepo() repository.ConnectionRepositor
 // SchemaRepo 获取元数据Repository（事务版本）
 func (r *PostgreSQLTxRepository) SchemaRepo() repository.SchemaRepository {
 	return r.schemaRepo
+}
+
+// FeedbackRepo 获取反馈Repository（事务版本）
+func (r *PostgreSQLTxRepository) FeedbackRepo() repository.FeedbackRepository {
+	return r.feedbackRepo
 }
 
 // Commit 提交事务

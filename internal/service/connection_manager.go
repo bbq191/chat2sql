@@ -329,8 +329,13 @@ func (cm *ConnectionManager) TestConnection(ctx context.Context, connection *rep
 		return fmt.Errorf("密码解密失败: %w", err)
 	}
 	
+	return cm.testConnectionDirect(ctx, connection, decryptedPassword)
+}
+
+// testConnectionDirect 使用明文密码直接测试数据库连接
+func (cm *ConnectionManager) testConnectionDirect(ctx context.Context, connection *repository.DatabaseConnection, plainPassword string) error {
 	// 构建连接字符串
-	connStr := cm.buildConnectionString(connection, decryptedPassword)
+	connStr := cm.buildConnectionString(connection, plainPassword)
 	
 	// 创建临时连接池用于测试
 	testCtx, cancel := context.WithTimeout(ctx, cm.connectionTimeout)
@@ -368,9 +373,9 @@ func (cm *ConnectionManager) CreateConnection(ctx context.Context, connection *r
 	originalPassword := connection.PasswordEncrypted
 	connection.PasswordEncrypted = encryptedPassword
 	
-	// 先测试连接（使用原始密码）
+	// 先测试连接（使用原始明文密码，不通过TestConnection方法）
 	connection.PasswordEncrypted = originalPassword
-	if err := cm.TestConnection(ctx, connection); err != nil {
+	if err := cm.testConnectionDirect(ctx, connection, originalPassword); err != nil {
 		return fmt.Errorf("连接测试失败: %w", err)
 	}
 	

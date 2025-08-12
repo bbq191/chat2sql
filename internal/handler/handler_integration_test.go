@@ -307,16 +307,25 @@ type MockHealthService struct {
 
 func (m *MockHealthService) CheckHealth(ctx context.Context) *service.HealthCheckResult {
 	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil
+	}
 	return args.Get(0).(*service.HealthCheckResult)
 }
 
 func (m *MockHealthService) CheckReadiness(ctx context.Context) *service.ReadinessResult {
 	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil
+	}
 	return args.Get(0).(*service.ReadinessResult)
 }
 
 func (m *MockHealthService) GetVersionInfo() map[string]interface{} {
 	args := m.Called()
+	if args.Get(0) == nil {
+		return nil
+	}
 	return args.Get(0).(map[string]interface{})
 }
 
@@ -675,7 +684,10 @@ func (suite *HandlerIntegrationTestSuite) setupTestRouter(authenticated bool, us
 	suite.mockSQLExecutor = new(MockSQLExecutor)
 	suite.mockQueryRepo = new(MockQueryHistoryRepository)
 	suite.mockConnectionRepo = new(MockConnectionRepository)
-	suite.mockHealthService = new(MockHealthService)
+	// 只有在mockHealthService为nil时才创建新的
+	if suite.mockHealthService == nil {
+		suite.mockHealthService = new(MockHealthService)
+	}
 	suite.mockAuthMiddleware = NewMockAuthMiddleware(authenticated, userID)
 	
 	// 创建SQLHandler
